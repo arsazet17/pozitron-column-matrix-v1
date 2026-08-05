@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#07111f">
-<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v1.0</title>
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v1.1</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -27,10 +27,11 @@ button,input,select{font:inherit}
 .toolbar button,.toolbar select{border:1px solid var(--line);background:var(--panel2);color:#fff;border-radius:10px;padding:10px 7px;font-weight:850}
 .card{background:rgba(14,28,46,.96);border:1px solid var(--line);border-radius:16px;padding:10px}
 .matrix-wrap{overflow:auto;border-radius:12px;border:1px solid #2a415f;background:#091525}
-.matrix{min-width:760px;width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
-.matrix th,.matrix td{height:42px;border-right:1px solid #2d4058;border-bottom:1px solid #2d4058;text-align:center;white-space:nowrap}
-.matrix th:first-child,.matrix td:first-child{position:sticky;left:0;z-index:3;background:#0e1b2c;text-align:left;padding:0 10px;font-weight:900;min-width:100px}
-.matrix th:last-child,.matrix td:last-child{min-width:108px}
+.matrix{min-width:650px;width:max-content;border-collapse:separate;border-spacing:0;font-size:13px}
+.matrix th,.matrix td{height:38px;border-right:1px solid #2d4058;border-bottom:1px solid #2d4058;text-align:center;white-space:nowrap}
+.matrix th:first-child,.matrix td:first-child{position:sticky;left:0;z-index:3;background:#0e1b2c;text-align:left;padding:0 7px;font-weight:900;width:88px;min-width:88px;max-width:88px}
+.matrix th:last-child,.matrix td:last-child{width:96px;min-width:96px}
+.matrix th:not(:first-child):not(:last-child),.matrix td:not(:first-child):not(:last-child){width:46px;min-width:46px;max-width:46px}
 .matrix thead th{position:sticky;top:0;z-index:4;background:#0e1b2c}
 .matrix thead tr:first-child th{top:0;height:34px;color:#d8e2ef;font-size:12px}
 .matrix thead tr:nth-child(2) th{top:34px;height:38px;background:#0d3440}
@@ -70,7 +71,7 @@ button,input,select{font:inherit}
 <div class="app">
   <div class="top">
     <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-      <small>новое отдельное приложение · v1.0</small>
+      <small>новое отдельное приложение · v1.1</small>
     </div>
     <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
   </div>
@@ -101,15 +102,10 @@ button,input,select{font:inherit}
 
     <div class="legend">
       <span>🟨 победивший столб</span>
-      <span>0 — пустой</span>
-      <span>1 — одно число</span>
-      <span>2 — два</span>
-      <span>3 — три</span>
-      <span>4+ — четыре и больше</span>
+      <span>в клетке — номер столба 1–10</span>
     </div>
     <div class="groupnote">
-      В строке тиража маленькая цифра в клетке показывает, сколько чисел было в этом столбе в предыдущем тираже.
-      Победивший столб выделяется жёлтым.
+      Матрица показывает победивший столб каждого тиража. Остальные клетки остаются пустыми.
     </div>
   </div>
 
@@ -147,6 +143,6 @@ button,input,select{font:inherit}
   </div>
 </div>
 
-<script src="matrix.js?v=100"></script>
+<script src="matrix.js?v=110"></script>
 </body>
 </html>

@@ -107,7 +107,12 @@
   }
 
   function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(draws));
+    const compact = draws.slice(-1200);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
+    } catch (_) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact.slice(-600)));
+    }
   }
 
   function load() {
@@ -119,10 +124,11 @@
   }
 
   function merge(incoming) {
-    const before = draws.length;
-    draws = dedupe([...draws, ...incoming]);
+    const beforeLast = draws.at(-1)?.draw || 0;
+    draws = dedupe([...draws, ...incoming]).slice(-2500);
+    const added = draws.filter(d => d.draw > beforeLast).length;
     save();
-    return draws.length - before;
+    return added;
   }
 
   function selectedRows() {
@@ -179,22 +185,16 @@
       return;
     }
 
-    const indexByDraw = new Map(draws.map((d,i) => [d.draw, i]));
     $('matrixBody').innerHTML = rows.map(d => {
-      const idx = indexByDraw.get(d.draw);
-      const prev = idx > 0 ? draws[idx - 1] : null;
-      const prevCounts = prev ? counts(prev) : Array(11).fill(0);
       const w = winner(d);
-
       const cells = Array.from({length:10},(_,i) => {
         const col = i + 1;
-        const state = prev ? prevCounts[col] : 0;
         const isWin = col === w;
-        return `<td class="cell ${stateClass(state)} ${isWin ? 'win' : ''}" title="ст${col} · до выхода было ${stateLabel(state)}">${isWin ? stateLabel(state) : ''}</td>`;
+        return `<td class="cell ${isWin ? 'win' : ''}" title="${isWin ? `победил ст${col}` : `ст${col}`}">${isWin ? col : ''}</td>`;
       }).join('');
 
       return `<tr>
-        <td>№${d.draw}</td>
+        <td>${d.draw}</td>
         ${cells}
         <td class="date">${showDate(d.date)}<br><small>${d.time || ''}</small></td>
       </tr>`;
