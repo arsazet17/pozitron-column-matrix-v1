@@ -1,0 +1,452 @@
+name: Update KENO history
+
+on:
+  push:
+    paths:
+      - '.github/workflows/update-history.yml'
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-keno-history
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Merge and restore missing KENO draws
+        run: |
+          cat > /tmp/repair-history.js <<'NODE'
+          'use strict';
+
+          const fs = require('fs');
+
+          const SOURCE_HISTORY_URL =
+            'https://raw.githubusercontent.com/arsazet17/pozitron-keno-v72/main/keno-history.json';
+          const LUCKY_ARCHIVE_URL = 'https://lucky-numbers.ru/lottery/ru/keno2';
+          const HISTORY_FILE = 'keno-history.json';
+          const RECENT_WINDOW = 800;
+          const MAX_REQUESTS = 900;
+
+          function stripTags(value) {
+            return String(value || '')
+              .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+              .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/&nbsp;|&#160;/gi, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+          }
+
+          function validDraw(row) {
+            const draw = Number(row?.draw);
+            const balls = Array.isArray(row?.balls) ? row.balls.map(Number) : [];
+            return Number.isInteger(draw) &&
+              balls.length === 20 &&
+              new Set(balls).size === 20 &&
+              balls.every(number => number >= 1 && number <= 80);
+          }
+
+          function normalize(row) {
+            return {
+              draw: Number(row.draw),
+              date: String(row.date || ''),
+              time: String(row.time || ''),
+              balls: row.balls.map(Number)
+            };
+          }
+
+          function gapsInRecent(map) {
+            const ids = [...map.keys()].sort((a, b) => a - b);
+            if (ids.length < 2) return [];
+            const floor = ids.at(-1) - RECENT_WINDOW;
+            const recent = ids.filter(number => number >= floor);
+            const gaps = [];
+
+            for (let index = 1; index < recent.length; index += 1) {
+              const before = recent[index - 1];
+              const after = recent[index];
+              if (after > before + 1) {
+                gaps.push({ from: before + 1, to: after - 1 });
+              }
+            }
+            return gaps;
+          }
+
+          function formatGaps(gaps) {
+            return gaps.map(gap =>
+              `№${gap.from}${gap.to === gap.from ? '' : `–${gap.to}`}`
+            ).join(', ');
+          }
+
+          function parseArchiveRows(html) {
+            const rows = [];
+            const tableRows = html.match(/<tr\b[\s\S]*?<\/tr>/gi) || [];
+
+            for (const tableRow of tableRows) {
+              const text = stripTags(tableRow);
+              const draws = [...text.matchAll(/(?:^|\s)(\d[\d\s\u00a0]{4,8})(?=\s|$)/g)]
+                .map(match => Number(match[1].replace(/\s|\u00a0/g, '')))
+                .filter(number => number >= 100000 && number <= 999999);
+              const draw = draws.at(-1);
+              if (!draw) continue;
+
+              const links = [
+                ...tableRow.matchAll(
+                  /href=["']([^"']*\/lottery\/ru\/keno2\/\d{13})["']/gi
+                )
+              ];
+              const href = links.at(-1)?.[1] || '';
+              if (!href) continue;
+
+              rows.push({
+                draw,
+                url: new URL(href, LUCKY_ARCHIVE_URL).href
+              });
+            }
+
+            return [...new Map(rows.map(row => [row.draw, row])).values()]
+              .sort((left, right) => right.draw - left.draw);
+          }
+
+          function parseDateTime(html) {
+            const text = stripTags(html);
+
+            let match = text.match(
+              /(?:от\s+)?(\d{1,2})\.(\d{1,2})\.(\d{2,4})\s*,?\s*(?:в\s*)?(\d{1,2}):(\d{2})/i
+            );
+            if (match) {
+              const year = String(match[3]).length === 2
+                ? match[3]
+                : String(match[3]).slice(-2);
+              return {
+                date: `${String(match[1]).padStart(2, '0')}.${String(match[2]).padStart(2, '0')}.${year}`,
+                time: `${String(match[4]).padStart(2, '0')}:${match[5]}`
+              };
+            }
+
+            const months = {
+              january: 1, february: 2, march: 3, april: 4,
+              may: 5, june: 6, july: 7, august: 8,
+              september: 9, october: 10, november: 11, december: 12
+            };
+            match = text.match(
+              /(?:от\s+)?(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*(\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i
+            );
+            if (match) {
+              let hour = Number(match[4]);
+              const period = match[6].toUpperCase();
+              if (period === 'PM' && hour !== 12) hour += 12;
+              if (period === 'AM' && hour === 12) hour = 0;
+              return {
+                date: `${String(match[2]).padStart(2, '0')}.${String(months[match[1].toLowerCase()]).padStart(2, '0')}.${String(match[3]).slice(-2)}`,
+                time: `${String(hour).padStart(2, '0')}:${match[5]}`
+              };
+            }
+
+            const ruMonths = {
+              января: 1, февраля: 2, марта: 3, апреля: 4,
+              мая: 5, июня: 6, июля: 7, августа: 8,
+              сентября: 9, октября: 10, ноября: 11, декабря: 12
+            };
+            match = text.match(
+              /(?:от\s+)?(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})\s*(?:г\.?)?\s*в\s*(\d{1,2}):(\d{2})/i
+            );
+            if (match) {
+              return {
+                date: `${String(match[1]).padStart(2, '0')}.${String(ruMonths[match[2].toLowerCase()]).padStart(2, '0')}.${String(match[3]).slice(-2)}`,
+                time: `${String(match[4]).padStart(2, '0')}:${match[5]}`
+              };
+            }
+
+            return null;
+          }
+
+          function parseSingleDraw(html, expectedDraw) {
+            const text = stripTags(html);
+            const candidates = [
+              text.match(/Результаты\s+тиража\s*№\s*([\d\s\u00a0]{5,9})/i),
+              text.match(/Тираж\s*№\s*([\d\s\u00a0]{5,9})\s+лотереи/i)
+            ].filter(Boolean);
+
+            const parsedDraw = candidates.length
+              ? Number(candidates[0][1].replace(/\s|\u00a0/g, ''))
+              : Number(expectedDraw);
+
+            if (!Number.isInteger(parsedDraw) || parsedDraw !== Number(expectedDraw)) {
+              throw new Error(
+                `Ожидался тираж №${expectedDraw}, страница дала №${parsedDraw || '?'}`
+              );
+            }
+
+            const marker = html.search(/Выпавшие\s+числа/i);
+            if (marker < 0) {
+              throw new Error(
+                `На странице №${expectedDraw} не найден блок «Выпавшие числа»`
+              );
+            }
+
+            let segment = html.slice(marker);
+            const end = segment.search(/Проверить\s+билет/i);
+            if (end > 0) segment = segment.slice(0, end);
+
+            const balls = [];
+            const buttonPattern = /<button\b[^>]*>\s*(\d{1,2})\s*<\/button>/gi;
+            let button;
+            while (
+              (button = buttonPattern.exec(segment)) &&
+              balls.length < 20
+            ) {
+              const number = Number(button[1]);
+              if (number >= 1 && number <= 80) balls.push(number);
+            }
+
+            if (balls.length !== 20) {
+              const plain = stripTags(segment);
+              const numbers = [
+                ...plain.matchAll(/(?:^|\s)(\d{1,2})(?=\s|$)/g)
+              ]
+                .map(match => Number(match[1]))
+                .filter(number => number >= 1 && number <= 80);
+              if (numbers.length >= 20) {
+                balls.splice(0, balls.length, ...numbers.slice(0, 20));
+              }
+            }
+
+            const dateTime = parseDateTime(html);
+            const row = {
+              draw: parsedDraw,
+              date: dateTime?.date || '',
+              time: dateTime?.time || '',
+              balls
+            };
+
+            if (!validDraw(row)) {
+              throw new Error(
+                `Тираж №${expectedDraw}: получено ${balls.length} корректных чисел вместо 20`
+              );
+            }
+            if (!row.date || !row.time) {
+              throw new Error(
+                `Тираж №${expectedDraw}: не распознаны дата и время`
+              );
+            }
+            return row;
+          }
+
+          function previousUrl(html, currentDraw) {
+            const wanted = Number(currentDraw) - 1;
+            const linkPattern =
+              /<a\b[^>]*href=["']([^"']*\/lottery\/ru\/keno2\/\d{13})["'][^>]*>([\s\S]*?)<\/a>/gi;
+            let match;
+
+            while ((match = linkPattern.exec(html))) {
+              const label = stripTags(match[2]).replace(/\s|\u00a0/g, '');
+              if (label.includes(String(wanted))) {
+                return new URL(match[1], LUCKY_ARCHIVE_URL).href;
+              }
+            }
+
+            throw new Error(
+              `Не найдена ссылка на предыдущий тираж №${wanted} со страницы №${currentDraw}`
+            );
+          }
+
+          async function fetchText(url, attempts = 3) {
+            let lastError;
+            for (let attempt = 1; attempt <= attempts; attempt += 1) {
+              try {
+                const response = await fetch(url, {
+                  redirect: 'follow',
+                  headers: {
+                    'user-agent':
+                      'Mozilla/5.0 GitHub-Actions Positron-Column-Matrix/1.0',
+                    accept: 'text/html,application/json,application/xhtml+xml',
+                    'accept-language': 'ru-RU,ru;q=0.9,en;q=0.5'
+                  }
+                });
+                if (!response.ok) {
+                  throw new Error(`HTTP ${response.status}: ${url}`);
+                }
+                return await response.text();
+              } catch (error) {
+                lastError = error;
+                if (attempt < attempts) {
+                  await new Promise(resolve =>
+                    setTimeout(resolve, attempt * 1000)
+                  );
+                }
+              }
+            }
+            throw lastError;
+          }
+
+          async function main() {
+            const local = fs.existsSync(HISTORY_FILE)
+              ? JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'))
+              : [];
+            const remote = JSON.parse(
+              await fetchText(`${SOURCE_HISTORY_URL}?ts=${Date.now()}`)
+            );
+
+            if (!Array.isArray(remote) || !remote.length) {
+              throw new Error('Загруженная история пуста или повреждена');
+            }
+
+            const map = new Map();
+            for (const row of [...local, ...remote]) {
+              if (validDraw(row)) map.set(Number(row.draw), normalize(row));
+            }
+
+            const initialGaps = gapsInRecent(map);
+            if (initialGaps.length) {
+              console.log(`Найдены пропуски: ${formatGaps(initialGaps)}`);
+
+              const earliestMissing = Math.min(
+                ...initialGaps.map(gap => gap.from)
+              );
+              const archiveHtml = await fetchText(LUCKY_ARCHIVE_URL);
+              const archiveRows = parseArchiveRows(archiveHtml);
+              if (!archiveRows.length) {
+                throw new Error(
+                  'Не найдены ссылки на тиражи в архиве Lucky Numbers'
+                );
+              }
+
+              const latestHistory = Math.max(...map.keys());
+              const anchor =
+                archiveRows.find(row => row.draw === latestHistory) ||
+                archiveRows[0];
+
+              let currentDraw = anchor.draw;
+              let url = anchor.url;
+              let requests = 0;
+              let restored = 0;
+              const seenUrls = new Set();
+
+              while (currentDraw >= earliestMissing) {
+                if (requests >= MAX_REQUESTS) {
+                  throw new Error(
+                    `Превышен лимит ${MAX_REQUESTS} запросов`
+                  );
+                }
+                if (seenUrls.has(url)) {
+                  throw new Error(
+                    `Зацикливание ссылки на тираже №${currentDraw}`
+                  );
+                }
+
+                seenUrls.add(url);
+                requests += 1;
+                const html = await fetchText(url);
+                const row = parseSingleDraw(html, currentDraw);
+
+                if (!map.has(row.draw)) {
+                  map.set(row.draw, row);
+                  restored += 1;
+                  console.log(
+                    `Восстановлен №${row.draw} · ${row.date} ${row.time}`
+                  );
+                }
+
+                if (currentDraw === earliestMissing) break;
+                url = previousUrl(html, currentDraw);
+                currentDraw -= 1;
+              }
+
+              console.log(`Восстановлено тиражей: ${restored}`);
+            } else {
+              console.log(
+                `Пропусков по номерам в последних ${RECENT_WINDOW} тиражах нет`
+              );
+            }
+
+            const remaining = gapsInRecent(map);
+            if (remaining.length) {
+              throw new Error(
+                `Остались пропуски: ${formatGaps(remaining)}`
+              );
+            }
+
+            const repaired = [...map.values()]
+              .sort((left, right) => left.draw - right.draw);
+            fs.writeFileSync(
+              HISTORY_FILE,
+              JSON.stringify(repaired)
+            );
+            console.log(`История готова: ${repaired.length} тиражей`);
+          }
+
+          main().catch(error => {
+            console.error(error.stack || error.message || error);
+            process.exit(1);
+          });
+          NODE
+
+          node --check /tmp/repair-history.js
+          node /tmp/repair-history.js
+
+      - name: Validate repaired JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path('keno-history.json').read_text(encoding='utf-8')
+          )
+          if not isinstance(data, list) or not data:
+              raise SystemExit('History is empty')
+
+          seen = set()
+          for row in data:
+              draw = int(row['draw'])
+              balls = [int(number) for number in row['balls']]
+              if draw in seen:
+                  raise SystemExit(f'Duplicate draw: {draw}')
+              if len(balls) != 20 or len(set(balls)) != 20:
+                  raise SystemExit(f'Draw {draw}: invalid balls')
+              if any(number < 1 or number > 80 for number in balls):
+                  raise SystemExit(f'Draw {draw}: ball outside 1..80')
+              seen.add(draw)
+
+          required = (
+              list(range(324368, 324382)) +
+              list(range(324537, 324561))
+          )
+          missing = [draw for draw in required if draw not in seen]
+          if missing:
+              raise SystemExit(
+                  'Still missing: ' + ', '.join(map(str, missing))
+              )
+
+          print(
+              f'JSON OK: {len(data)} draws; '
+              'all 38 missing draws are restored'
+          )
+          PY
+
+      - name: Commit only when data changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- keno-history.json; then
+            echo 'No history changes'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email \
+            '41898282+github-actions[bot]@users.noreply.github.com'
+          git add keno-history.json
+          git commit -m 'Restore missing KENO draws and update history'
+          git push
