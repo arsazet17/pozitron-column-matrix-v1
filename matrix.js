@@ -8,6 +8,7 @@
 
   let draws = [];
   let timer = null;
+  let activeView = 'matrix';
 
   const pad = n => String(n).padStart(2, '0');
   const colOf = n => Number(n) % 10 || 10;
@@ -293,6 +294,134 @@
     }).join('');
   }
 
+
+  function dateKeyToMs(dateKey) {
+    const m = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return NaN;
+    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+
+  function msToDateKey(ms) {
+    const d = new Date(ms);
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+  }
+
+  function shiftDateKey(dateKey, deltaDays) {
+    const ms = dateKeyToMs(dateKey);
+    if (!Number.isFinite(ms)) return '';
+    return msToDateKey(ms + deltaDays * 86400000);
+  }
+
+  function yuliaData() {
+    const byDate = new Map();
+
+    draws.forEach(d => {
+      const dk = normDate(d.date);
+      const tm = normTime(d.time).slice(0,5);
+      if (!dk || !tm) return;
+      if (!byDate.has(dk)) byDate.set(dk, new Map());
+      byDate.get(dk).set(tm, d);
+    });
+
+    const allDates = [...byDate.keys()].sort();
+    const days = Number($('yuliaDays')?.value || 14);
+    const dates = allDates.slice(-days);
+
+    const times = [...new Set(
+      dates.flatMap(d => [...(byDate.get(d)?.keys() || [])])
+    )].sort((a,b) => {
+      const [ah,am] = a.split(':').map(Number);
+      const [bh,bm] = b.split(':').map(Number);
+      return (ah*60+am) - (bh*60+bm);
+    });
+
+    return { byDate, dates, times };
+  }
+
+  function yuliaColorClass(data, dateKey, time, timeIndex, value) {
+    const { byDate, times } = data;
+    const prev1 = shiftDateKey(dateKey, -1);
+    const prev2 = shiftDateKey(dateKey, -2);
+
+    const same1 = byDate.get(prev1)?.get(time);
+    if (same1 && winner(same1) === value) return 'y-blue';
+
+    const rightTime = times[timeIndex + 1];
+    const right = rightTime ? byDate.get(prev1)?.get(rightTime) : null;
+    if (right && winner(right) === value) return 'y-green';
+
+    const leftTime = times[timeIndex - 1];
+    const left = leftTime ? byDate.get(prev1)?.get(leftTime) : null;
+    if (left && winner(left) === value) return 'y-orange';
+
+    const same2 = byDate.get(prev2)?.get(time);
+    if (same2 && winner(same2) === value) return 'y-light';
+
+    return '';
+  }
+
+  function renderYulia() {
+    if (!$('yuliaHead') || !$('yuliaBody')) return;
+
+    const data = yuliaData();
+
+    $('yuliaHead').innerHTML = `<tr>
+      <th>Дата</th>
+      ${data.times.map(t => `<th>${t}</th>`).join('')}
+    </tr>`;
+
+    if (!data.dates.length || !data.times.length) {
+      $('yuliaBody').innerHTML = '<tr><td colspan="2">Нет данных</td></tr>';
+      return;
+    }
+
+    $('yuliaBody').innerHTML = data.dates.map(dateKey => {
+      const map = data.byDate.get(dateKey) || new Map();
+
+      const cells = data.times.map((time, timeIndex) => {
+        const d = map.get(time);
+        if (!d) return '<td></td>';
+
+        const w = winner(d);
+        const cls = yuliaColorClass(data, dateKey, time, timeIndex, w);
+
+        return `<td class="yulia-cell ${cls}"
+          data-win-draw="${d.draw}"
+          data-win-col="${w}"
+          title="${time} · ст${w} · нажмите для группы">${w}</td>`;
+      }).join('');
+
+      return `<tr>
+        <td>${showDate(dateKey)}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    $('yuliaBody').querySelectorAll('[data-win-draw]').forEach(cell => {
+      cell.onclick = event => {
+        event.stopPropagation();
+        showWinnerPopup(
+          cell,
+          Number(cell.dataset.winDraw),
+          Number(cell.dataset.winCol)
+        );
+      };
+    });
+  }
+
+  function switchView(view) {
+    activeView = view === 'yulia' ? 'yulia' : 'matrix';
+
+    $('matrixView')?.classList.toggle('active', activeView === 'matrix');
+    $('yuliaView')?.classList.toggle('active', activeView === 'yulia');
+
+    $('matrixViewBtn')?.classList.toggle('active', activeView === 'matrix');
+    $('yuliaViewBtn')?.classList.toggle('active', activeView === 'yulia');
+
+    closeMatrixPopup();
+    window.scrollTo({ top:0, behavior:'smooth' });
+  }
+
   function render() {
     closeMatrixPopup();
     renderDates();
@@ -300,6 +429,7 @@
     renderHead(rows);
     renderBody(rows);
     renderStats(rows);
+    renderYulia();
 
     if (draws.length) {
       const last = draws.at(-1);
@@ -350,6 +480,13 @@
   window.addEventListener('resize', closeMatrixPopup);
   window.addEventListener('scroll', closeMatrixPopup, true);
 
+
+  $('matrixViewBtn').onclick = () => switchView('matrix');
+  $('yuliaViewBtn').onclick = () => switchView('yulia');
+  $('homeBtn').onclick = () => {
+    window.scrollTo({top:0,behavior:'smooth'});
+  };
+  $('yuliaDays').onchange = renderYulia;
   $('limitSelect').onchange = render;
   $('dateSelect').onchange = render;
   $('syncBtn').onclick = update;
