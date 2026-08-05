@@ -1,0 +1,53 @@
+name: Update KENO history
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-keno-history
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download latest KENO history
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            'https://raw.githubusercontent.com/arsazet17/pozitron-keno-v72/main/keno-history.json' \
+            -o keno-history.json.new
+
+      - name: Validate JSON
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('keno-history.json.new')
+          data = json.loads(p.read_text(encoding='utf-8'))
+          if not data:
+              raise SystemExit('Downloaded history is empty')
+          p.replace('keno-history.json')
+          print('JSON OK')
+          PY
+
+      - name: Commit only when data changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- keno-history.json && git ls-files --error-unmatch keno-history.json >/dev/null 2>&1; then
+            echo 'No changes'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add keno-history.json
+          git commit -m 'Auto-update KENO history' || exit 0
+          git push
