@@ -165,18 +165,87 @@
   }
 
   function renderHead(rows) {
-    const f = frequency(rows);
     $('matrixHead').innerHTML = `
-      <tr>
-        <th>Частота</th>
-        ${Array.from({length:10},(_,i)=>`<th class="freq">${f[i+1]}</th>`).join('')}
-        <th>Дата</th>
-      </tr>
       <tr>
         <th>Тираж</th>
         ${Array.from({length:10},(_,i)=>`<th class="headnum">${i+1}</th>`).join('')}
         <th>Дата</th>
       </tr>`;
+  }
+
+
+  function groupLabel(count) {
+    return count >= 4 ? '4+' : String(count);
+  }
+
+  function groupDetails(drawIndex, winnerCol) {
+    const prev = drawIndex > 0 ? draws[drawIndex - 1] : null;
+    if (!prev) {
+      return { group:'—', columns:[], numbers:[] };
+    }
+    const c = counts(prev);
+    const raw = c[winnerCol] || 0;
+    const same = [];
+    for (let col = 1; col <= 10; col += 1) {
+      const value = c[col] || 0;
+      const sameGroup = raw >= 4 ? value >= 4 : value === raw;
+      if (sameGroup) same.push(col);
+    }
+    const numbers = (prev.balls || []).map(Number).filter(n => colOf(n) === winnerCol);
+    return { group:groupLabel(raw), columns:same, numbers };
+  }
+
+  function closeMatrixPopup() {
+    const p = $('matrixPopup');
+    if (p) p.hidden = true;
+  }
+
+  function placeMatrixPopup(cell) {
+    const popup = $('matrixPopup');
+    if (!popup || !cell) return;
+    popup.hidden = false;
+
+    const r = cell.getBoundingClientRect();
+    const pad = 8;
+    const w = popup.offsetWidth;
+    const h = popup.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Сначала пробуем справа от клетки.
+    let left = r.right + 8;
+    let top = r.top - 8;
+
+    // Если справа тесно — слева.
+    if (left + w > vw - pad) left = r.left - w - 8;
+
+    // Если и слева тесно — под строкой.
+    if (left < pad) {
+      left = Math.max(pad, Math.min(r.left, vw - w - pad));
+      top = r.bottom + 8;
+    }
+
+    // Если снизу не помещается — поднимаем выше.
+    if (top + h > vh - pad) {
+      top = Math.max(pad, r.top - h - 8);
+    }
+
+    popup.style.left = `${Math.round(left)}px`;
+    popup.style.top = `${Math.round(top)}px`;
+  }
+
+  function showWinnerPopup(cell, drawNumber, winnerCol) {
+    const idx = draws.findIndex(d => Number(d.draw) === Number(drawNumber));
+    if (idx < 0) return;
+    const info = groupDetails(idx, winnerCol);
+
+    $('mpTitle').textContent = `ст${winnerCol}`;
+    $('mpDraw').textContent = `№${drawNumber}`;
+    $('mpGroup').textContent = info.group;
+    $('mpCols').textContent = info.columns.length ? info.columns.map(c => `ст${c}`).join(' · ') : '—';
+    $('mpNums').textContent = info.numbers.length ? info.numbers.map(n => pad(n)).join(' · ') : '—';
+
+    placeMatrixPopup(cell);
   }
 
   function renderBody(rows) {
@@ -190,7 +259,9 @@
       const cells = Array.from({length:10},(_,i) => {
         const col = i + 1;
         const isWin = col === w;
-        return `<td class="cell ${isWin ? 'win' : ''}" title="${isWin ? `победил ст${col}` : `ст${col}`}">${isWin ? col : ''}</td>`;
+        return `<td class="cell ${isWin ? 'win' : ''}"
+          ${isWin ? `data-win-draw="${d.draw}" data-win-col="${col}"` : ''}
+          title="${isWin ? `победил ст${col} — нажмите для группы выхода` : `ст${col}`}">${isWin ? col : ''}</td>`;
       }).join('');
 
       return `<tr>
@@ -199,6 +270,17 @@
         <td class="date">${showDate(d.date)}<br><small>${d.time || ''}</small></td>
       </tr>`;
     }).join('');
+
+    document.querySelectorAll('[data-win-draw]').forEach(cell => {
+      cell.onclick = (event) => {
+        event.stopPropagation();
+        showWinnerPopup(
+          cell,
+          Number(cell.dataset.winDraw),
+          Number(cell.dataset.winCol)
+        );
+      };
+    });
   }
 
   function renderStats(rows) {
@@ -212,6 +294,7 @@
   }
 
   function render() {
+    closeMatrixPopup();
     renderDates();
     const rows = selectedRows();
     renderHead(rows);
@@ -259,6 +342,13 @@
       $('settingsPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
+
+  $('mpClose').onclick = closeMatrixPopup;
+  document.addEventListener('click', event => {
+    if (!event.target.closest('#matrixPopup') && !event.target.closest('[data-win-draw]')) closeMatrixPopup();
+  });
+  window.addEventListener('resize', closeMatrixPopup);
+  window.addEventListener('scroll', closeMatrixPopup, true);
 
   $('limitSelect').onchange = render;
   $('dateSelect').onchange = render;
