@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07111f">
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v1.0</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#07111f;--panel:#0e1c2e;--panel2:#13253b;--line:#29425f;
+  --text:#f5f8ff;--muted:#9babc0;--cyan:#22d3ee;--green:#6ee7a0;
+  --gold:#ffd34f;--cell:#0b1728;--brown:#5a4315;--yellow:#f7ca3e;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+body{min-height:100vh;background:linear-gradient(180deg,#081426 0%,#07111f 100%)}
+button,input,select{font:inherit}
+.app{max-width:980px;margin:auto;padding:12px 10px 92px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.brand{font-weight:950;font-size:22px;line-height:1.05}
+.brand small{display:block;font-size:12px;color:var(--muted);font-weight:700;margin-top:5px}
+.iconbtn{width:44px;height:44px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:#fff;font-size:22px}
+.status{margin:8px 0 10px;color:var(--muted);font-size:12px}
+.toolbar{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px}
+.toolbar button,.toolbar select{border:1px solid var(--line);background:var(--panel2);color:#fff;border-radius:10px;padding:10px 7px;font-weight:850}
+.card{background:rgba(14,28,46,.96);border:1px solid var(--line);border-radius:16px;padding:10px}
+.matrix-wrap{overflow:auto;border-radius:12px;border:1px solid #2a415f;background:#091525}
+.matrix{min-width:760px;width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.matrix th,.matrix td{height:42px;border-right:1px solid #2d4058;border-bottom:1px solid #2d4058;text-align:center;white-space:nowrap}
+.matrix th:first-child,.matrix td:first-child{position:sticky;left:0;z-index:3;background:#0e1b2c;text-align:left;padding:0 10px;font-weight:900;min-width:100px}
+.matrix th:last-child,.matrix td:last-child{min-width:108px}
+.matrix thead th{position:sticky;top:0;z-index:4;background:#0e1b2c}
+.matrix thead tr:first-child th{top:0;height:34px;color:#d8e2ef;font-size:12px}
+.matrix thead tr:nth-child(2) th{top:34px;height:38px;background:#0d3440}
+.matrix thead tr:nth-child(2) th:first-child{background:#0d3440}
+.freq{font-size:17px;font-weight:950;color:#f3f6fb}
+.headnum{font-size:16px;font-weight:950}
+.cell{background:#081425;font-weight:900;color:#aab9ca}
+.cell.win{background:var(--yellow);color:#111;font-size:17px;box-shadow:inset 0 0 0 1px #ffe16a}
+.cell.state0{background:#182337;color:#8798ad}
+.cell.state1{background:#2f4258;color:#d8e4f1}
+.cell.state2{background:#43586e;color:#edf5ff}
+.cell.state3{background:#586f82;color:#fff}
+.cell.state4{background:#6d571b;color:#ffe57d}
+.date{color:#d9e2ed;padding:0 10px}
+.groupnote{font-size:11px;color:var(--muted);margin-top:9px;line-height:1.45}
+.legend{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}
+.legend span{border:1px solid #334b69;background:#101f32;border-radius:999px;padding:5px 8px;font-size:11px}
+.panel{margin-top:10px;display:none}
+.panel.show{display:block}
+.field{display:grid;gap:5px;margin-top:8px}
+.field label{font-size:12px;color:var(--muted)}
+.field input,.field select{width:100%;border:1px solid var(--line);background:#091524;color:#fff;border-radius:9px;padding:10px}
+.row{padding:10px;border:1px solid #2d4665;background:#101f33;border-radius:10px;margin-top:8px;font-size:13px}
+.footer{position:fixed;left:0;right:0;bottom:0;border-top:1px solid var(--line);background:rgba(5,12,21,.97);backdrop-filter:blur(10px);padding:7px 8px calc(7px + env(safe-area-inset-bottom))}
+.footerin{max-width:980px;margin:auto;display:grid;grid-template-columns:repeat(4,1fr)}
+.footer button{border:0;background:transparent;color:#c7d3df;font-size:11px;padding:3px}
+.footer b{display:block;font-size:20px}
+@media(max-width:520px){
+ .app{padding-left:6px;padding-right:6px}
+ .brand{font-size:19px}
+ .toolbar{grid-template-columns:1fr 1fr}
+ .toolbar button:last-child{grid-column:1/-1}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
+      <small>новое отдельное приложение · v1.0</small>
+    </div>
+    <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
+  </div>
+
+  <div id="status" class="status">Загружаю базу…</div>
+
+  <div class="toolbar">
+    <select id="limitSelect" aria-label="Количество тиражей">
+      <option value="30">30 тиражей</option>
+      <option value="50" selected>50 тиражей</option>
+      <option value="100">100 тиражей</option>
+      <option value="200">200 тиражей</option>
+      <option value="500">500 тиражей</option>
+    </select>
+    <select id="dateSelect" aria-label="Дата">
+      <option value="">Все даты</option>
+    </select>
+    <button id="settingsBtn">⚙ Источник</button>
+  </div>
+
+  <div class="card">
+    <div class="matrix-wrap">
+      <table class="matrix">
+        <thead id="matrixHead"></thead>
+        <tbody id="matrixBody"></tbody>
+      </table>
+    </div>
+
+    <div class="legend">
+      <span>🟨 победивший столб</span>
+      <span>0 — пустой</span>
+      <span>1 — одно число</span>
+      <span>2 — два</span>
+      <span>3 — три</span>
+      <span>4+ — четыре и больше</span>
+    </div>
+    <div class="groupnote">
+      В строке тиража маленькая цифра в клетке показывает, сколько чисел было в этом столбе в предыдущем тираже.
+      Победивший столб выделяется жёлтым.
+    </div>
+  </div>
+
+  <section id="settingsPanel" class="card panel">
+    <b>⚙ Источник обновления</b>
+    <div class="field">
+      <label>JSON с историей КЕНО</label>
+      <input id="sourceInput">
+    </div>
+    <div class="field">
+      <label>Автообновление</label>
+      <select id="intervalSelect">
+        <option value="0">Выключено</option>
+        <option value="60000">Каждую минуту</option>
+        <option value="300000" selected>Каждые 5 минут</option>
+        <option value="600000">Каждые 10 минут</option>
+      </select>
+    </div>
+    <button id="saveSettings" style="margin-top:9px;width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:#244b77;color:#fff;font-weight:900">Сохранить</button>
+    <div class="row">Локальная база сохраняется отдельно в браузере телефона. При временной ошибке сети уже загруженные тиражи не пропадают.</div>
+  </section>
+
+  <section id="statsPanel" class="card panel">
+    <b>📊 Частоты</b>
+    <div id="statsRows"></div>
+  </section>
+</div>
+
+<div class="footer">
+  <div class="footerin">
+    <button onclick="scrollTo({top:0,behavior:'smooth'})"><b>⌂</b>Матрица</button>
+    <button id="statsBtn"><b>▥</b>Частоты</button>
+    <button id="settingsBtn2"><b>⚙</b>Источник</button>
+    <button id="syncBtn2"><b>↻</b>Обновить</button>
+  </div>
+</div>
+
+<script src="matrix.js?v=100"></script>
+</body>
+</html>
