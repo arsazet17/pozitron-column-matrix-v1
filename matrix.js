@@ -4,7 +4,8 @@
   const STORAGE_KEY = 'pozitron_column_matrix_draws_v1';
   const URL_KEY = 'pozitron_column_matrix_source_v1';
   const INTERVAL_KEY = 'pozitron_column_matrix_interval_v1';
-  const DEFAULT_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-keno-v72/main/keno-history.json';
+  const LEGACY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-keno-v72/main/keno-history.json';
+  const DEFAULT_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
 
   let draws = [];
   let timer = null;
@@ -439,15 +440,36 @@
     }
   }
 
+  function sourceUrl() {
+    const saved = (localStorage.getItem(URL_KEY) || '').trim();
+    if (!saved || saved === LEGACY_URL) {
+      localStorage.setItem(URL_KEY, DEFAULT_URL);
+      return DEFAULT_URL;
+    }
+    return saved;
+  }
+
+  async function fetchSource(url) {
+    const busted = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const r = await fetch(busted, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const incoming = parsePayload(await r.text());
+    if (!incoming.length) throw new Error('нет распознанных тиражей');
+    return incoming;
+  }
+
   async function update() {
-    const saved = (localStorage.getItem(URL_KEY) || DEFAULT_URL).trim() || DEFAULT_URL;
-    const url = saved + (saved.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const saved = sourceUrl();
     $('status').textContent = 'Проверяю новые тиражи…';
     try {
-      const r = await fetch(url, { cache: 'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const incoming = parsePayload(await r.text());
-      if (!incoming.length) throw new Error('нет распознанных тиражей');
+      let incoming;
+      try {
+        incoming = await fetchSource(saved);
+      } catch (primaryError) {
+        // Пока cron ещё не создал локальную копию, временно читаем старый источник.
+        if (saved !== DEFAULT_URL) throw primaryError;
+        incoming = await fetchSource(LEGACY_URL);
+      }
       const added = merge(incoming);
       render();
       $('status').textContent = `Обновлено · добавлено ${added} · всего ${draws.length}`;
@@ -466,7 +488,7 @@
 
   function openSettings() {
     $('settingsPanel').classList.toggle('show');
-    $('sourceInput').value = localStorage.getItem(URL_KEY) || DEFAULT_URL;
+    $('sourceInput').value = sourceUrl();
     $('intervalSelect').value = localStorage.getItem(INTERVAL_KEY) || '300000';
     if ($('settingsPanel').classList.contains('show')) {
       $('settingsPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
