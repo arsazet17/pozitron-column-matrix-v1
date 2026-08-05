@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#07111f">
-<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v1.4</title>
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v1.5</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -65,7 +65,6 @@ button,input,select{font:inherit}
  .toolbar{grid-template-columns:1fr 1fr}
  .toolbar button:last-child{grid-column:1/-1}
 }
-
 .matrix-popup{
   position:fixed;z-index:9999;width:min(290px,calc(100vw - 20px));
   background:#0d1d30;border:1px solid #4b6b91;border-radius:13px;
@@ -83,48 +82,41 @@ button,input,select{font:inherit}
 .matrix-popup .mp-nums{font-family:ui-monospace,Consolas,monospace;font-weight:950;color:#ffe485}
 .cell.win{cursor:pointer}
 .cell.win:active{transform:scale(.96)}
-
-
 .viewtabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 10px}
 .viewtab{border:1px solid var(--line);background:#0e1c2e;color:#aebfd2;border-radius:10px;padding:9px 8px;font-weight:950}
 .viewtab.active{background:#144b5b;color:#fff;border-color:#2a7184}
 .viewpage{display:none}
 .viewpage.active{display:block}
-
 .yulia-card{padding:8px}
 .yulia-title{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .yulia-title b{font-size:18px}
 .yulia-title small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
 .yulia-title select{border:1px solid var(--line);background:#13253b;color:#fff;border-radius:8px;padding:7px;font-weight:800}
-
 .yulia-wrap{overflow:auto;border:1px solid #33465e;border-radius:10px;background:#0a1525;max-height:68vh}
 .yulia-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;font-size:13px}
 .yulia-table th,.yulia-table td{height:34px;min-width:48px;border-right:1px solid #34485f;border-bottom:1px solid #34485f;text-align:center;white-space:nowrap}
 .yulia-table thead th{position:sticky;top:0;z-index:4;background:#101d31;color:#eef4fb;font-weight:950}
 .yulia-table th:first-child,.yulia-table td:first-child{position:sticky;left:0;z-index:3;min-width:86px;width:86px;background:#101d31;text-align:left;padding:0 7px;font-weight:950}
 .yulia-table thead th:first-child{z-index:5}
-
 .yulia-cell{background:#f8fbff;color:#0f1720;font-weight:900;font-size:16px;cursor:pointer}
 .yulia-cell.y-blue{background:#12a7df;color:#06121c}
 .yulia-cell.y-green{background:#8fd24f;color:#10200d}
 .yulia-cell.y-orange{background:#ffb51b;color:#261700}
 .yulia-cell.y-light{background:#c8eaf7;color:#0d2430}
 .yulia-cell:active{transform:scale(.96)}
-
 .yulia-legend{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
 .yulia-legend .lg{border-radius:8px;padding:5px 7px;font-size:11px;font-weight:800;border:1px solid rgba(255,255,255,.16)}
 .yulia-legend .y-blue{background:#12a7df;color:#07111f}
 .yulia-legend .y-green{background:#8fd24f;color:#10200d}
 .yulia-legend .y-orange{background:#ffb51b;color:#261700}
 .yulia-legend .y-light{background:#c8eaf7;color:#0d2430}
-
 </style>
 </head>
 <body>
 <div class="app">
   <div class="top">
     <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-      <small>новое отдельное приложение · v1.4</small>
+      <small>новое отдельное приложение · v1.5</small>
     </div>
     <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
   </div>
@@ -151,23 +143,22 @@ button,input,select{font:inherit}
   </div>
 
   <div id="matrixView" class="viewpage active">
-  <div class="card">
-    <div class="matrix-wrap">
-      <table class="matrix">
-        <thead id="matrixHead"></thead>
-        <tbody id="matrixBody"></tbody>
-      </table>
-    </div>
+    <div class="card">
+      <div class="matrix-wrap">
+        <table class="matrix">
+          <thead id="matrixHead"></thead>
+          <tbody id="matrixBody"></tbody>
+        </table>
+      </div>
 
-    <div class="legend">
-      <span>🟨 победивший столб</span>
-      <span>нажмите на жёлтый столб — увидите группу выхода</span>
+      <div class="legend">
+        <span>🟨 победивший столб</span>
+        <span>нажмите на жёлтый столб — увидите группу выхода</span>
+      </div>
+      <div class="groupnote">
+        Матрица показывает победивший столб каждого тиража. Остальные клетки остаются пустыми.
+      </div>
     </div>
-    <div class="groupnote">
-      Матрица показывает победивший столб каждого тиража. Остальные клетки остаются пустыми.
-    </div>
-  </div>
-
   </div>
 
   <section id="yuliaView" class="viewpage">
@@ -229,7 +220,6 @@ button,input,select{font:inherit}
   </section>
 </div>
 
-
 <div id="matrixPopup" class="matrix-popup" hidden>
   <div class="mp-head">
     <div id="mpTitle" class="mp-title">столб</div>
@@ -251,5 +241,6 @@ button,input,select{font:inherit}
 </div>
 
 <script src="matrix.js?v=140"></script>
+<script src="yulia-gap-fix.js?v=150"></script>
 </body>
 </html>
