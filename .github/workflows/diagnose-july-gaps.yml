@@ -1,0 +1,137 @@
+name: Diagnose July KENO gaps
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Inspect July gaps without changing files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          import re
+          import urllib.request
+          from pathlib import Path
+
+          LOCAL = Path("keno-history.json")
+          REMOTE = (
+              "https://raw.githubusercontent.com/"
+              "arsazet17/pozitron-keno-v72/main/keno-history.json"
+          )
+
+          def load_local():
+              return json.loads(LOCAL.read_text(encoding="utf-8"))
+
+          def load_remote():
+              req = urllib.request.Request(
+                  REMOTE,
+                  headers={"User-Agent": "Positron-July-Diagnostic/1.0"}
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          def iso_date(v):
+              s = str(v or "").strip()
+
+              m = re.search(r"(2026)[-/.](\d{1,2})[-/.](\d{1,2})", s)
+              if m:
+                  return f"{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}"
+
+              m = re.search(r"(\d{1,2})[-/.](\d{1,2})[-/.](2026|26)", s)
+              if m:
+                  y = 2026 if m[3] == "26" else int(m[3])
+                  return f"{y:04d}-{int(m[2]):02d}-{int(m[1]):02d}"
+
+              return ""
+
+          def draw(row):
+              try:
+                  return int(row.get("draw", 0))
+              except Exception:
+                  return 0
+
+          def compact(row):
+              return {
+                  "draw": row.get("draw"),
+                  "date": row.get("date"),
+                  "time": row.get("time"),
+                  "balls_count": len(row.get("balls", []))
+                      if isinstance(row.get("balls"), list) else 0
+              }
+
+          def report(label, data):
+              print()
+              print("=" * 70)
+              print(label)
+              print("=" * 70)
+              print("Всего записей:", len(data))
+
+              targets = {"2026-07-22", "2026-07-26"}
+
+              for target in sorted(targets):
+                  rows = [r for r in data if iso_date(r.get("date")) == target]
+                  rows.sort(key=draw)
+                  print()
+                  print(f"{target}: найдено {len(rows)} записей")
+                  for r in rows:
+                      print(json.dumps(compact(r), ensure_ascii=False))
+
+              empty = [
+                  r for r in data
+                  if not str(r.get("date", "")).strip()
+                  or not str(r.get("time", "")).strip()
+              ]
+              empty.sort(key=draw)
+
+              print()
+              print("Записи с пустой date/time:", len(empty))
+              for r in empty[-120:]:
+                  print(json.dumps(compact(r), ensure_ascii=False))
+
+              july = [
+                  r for r in data
+                  if iso_date(r.get("date", "")).startswith("2026-07-")
+              ]
+              july.sort(key=draw)
+
+              print()
+              print("Диапазон июльских тиражей:")
+              if july:
+                  print("первый:", json.dumps(compact(july[0]), ensure_ascii=False))
+                  print("последний:", json.dumps(compact(july[-1]), ensure_ascii=False))
+              else:
+                  print("июльские записи не распознаны")
+
+          local = load_local()
+          report("LOCAL: column-matrix", local)
+
+          try:
+              remote = load_remote()
+              report("REMOTE: pozitron-keno-v72", remote)
+          except Exception as e:
+              print()
+              print("REMOTE ERROR:", repr(e))
+
+          print()
+          print("ДИАГНОСТИКА ЗАВЕРШЕНА. НИ ОДИН ФАЙЛ НЕ ИЗМЕНЯЛСЯ.")
+          PY
+
+      - name: Verify repository is untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          echo "OK: repository files were not changed"
