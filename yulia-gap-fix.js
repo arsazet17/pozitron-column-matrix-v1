@@ -1,14 +1,18 @@
-
 'use strict';
 
 /*
   ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-  yulia-gap-fix.js — безопасно отключён.
+  yulia-gap-fix.js — безопасный загрузчик дополнительного ИИ-модуля.
 
-  Основная логика "Горизонтали Юли" уже находится в matrix.js.
-  Этот файл специально больше не перестраивает строки таблицы.
+  Основная логика "Горизонтали Юли" остаётся в matrix.js.
+  Этот файл не перестраивает таблицу Юли.
 */
 
 (() => {
-  // Ничего не изменяем в DOM.
+  if (document.querySelector('script[data-pozitron-ai]')) return;
+  const s = document.createElement('script');
+  s.src = `ai-analyzer.js?v=100`;
+  s.defer = true;
+  s.dataset.pozitronAi = '1';
+  document.head.appendChild(s);
 })();
