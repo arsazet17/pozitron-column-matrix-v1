@@ -453,65 +453,31 @@ function comparable(row) {
   });
 }
 
-async function readArchiveThreeTimes(page, minTargetDraw, requiredDraws) {
-  const reads = [];
+async function readArchiveOnce(page, minTargetDraw, requiredDraws) {
+  const rawRows = await collectRows(page, minTargetDraw);
+  const parsed = parseRows(rawRows);
 
-  for (let i = 1; i <= 3; i += 1) {
-    const rawRows = await collectRows(page, minTargetDraw);
-    const parsed = parseRows(rawRows);
-
-    if (!parsed.length) {
-      throw new Error(`FAIL: чтение ${i}: Столото не отдал тиражи`);
-    }
-
-    reads.push(parsed);
-    console.log(
-      `Чтение ${i}: ${parsed.length} тиражей, ` +
-      `диапазон №${parsed[0].draw}–№${parsed.at(-1).draw}`
-    );
-
-    if (i < 3) await page.waitForTimeout(1500);
+  if (!parsed.length) {
+    throw new Error('FAIL: Столото не отдал тиражи');
   }
 
-  const maps = reads.map(arr => new Map(arr.map(row => [row.draw, row])));
-  const stableMap = new Map();
-  const mismatches = [];
+  const officialMap = new Map(parsed.map(row => [row.draw, row]));
+  const missingRequired = [...requiredDraws].filter(draw => !officialMap.has(draw));
 
-  const commonDraws = [...maps[0].keys()]
-    .filter(draw => maps[1].has(draw) && maps[2].has(draw));
-
-  for (const draw of commonDraws) {
-    const d1 = maps[0].get(draw);
-    const d2 = maps[1].get(draw);
-    const d3 = maps[2].get(draw);
-
-    if (comparable(d1) === comparable(d2) && comparable(d1) === comparable(d3)) {
-      stableMap.set(draw, d1);
-    } else {
-      mismatches.push(draw);
-    }
-  }
-
-  const missingRequired = [...requiredDraws].filter(draw => !stableMap.has(draw));
   if (missingRequired.length) {
     throw new Error(
-      `FAIL: после тройной проверки нет ${missingRequired.length} нужных тиражей: ` +
+      `FAIL: после одного чтения нет ${missingRequired.length} нужных тиражей: ` +
       missingRequired.slice(0, 25).map(n => `№${n}`).join(', ')
     );
   }
 
-  if (mismatches.length) {
-    console.log(
-      `WARN: нестабильные строки вне обязательного набора: ${mismatches.length}`
-    );
-  }
-
   console.log(
-    `Тройная проверка PASS: все ${requiredDraws.size} нужных тиражей ` +
-    `одинаковы во всех 3 чтениях`
+    `Одно чтение PASS: ${parsed.length} тиражей, ` +
+    `диапазон №${parsed[0].draw}–№${parsed.at(-1).draw}; ` +
+    `все ${requiredDraws.size} нужных тиражей найдены`
   );
 
-  return stableMap;
+  return officialMap;
 }
 
 async function readTrustedHistory() {
@@ -642,7 +608,7 @@ function applyOfficialBackfill(historyRaw, history, officialMap, targetDates) {
 
     const official = officialMap.get(row.draw);
     if (!official) {
-      throw new Error(`FAIL: нет тройно подтверждённого Столото №${row.draw}`);
+      throw new Error(`FAIL: нет официального Столото №${row.draw}`);
     }
 
     compareTrustedBase(row, official);
@@ -665,8 +631,8 @@ function applyOfficialBackfill(historyRaw, history, officialMap, targetDates) {
         ...row.original,
         column: official.column,
         parity: official.parity,
-        source: row.original?.source || 'Официальный Столото · OAuth · тройная проверка',
-        officialFieldsSource: 'Официальный Столото · OAuth · тройная проверка · backfill 32 дня'
+        source: row.original?.source || 'Официальный Столото · OAuth · один проход',
+        officialFieldsSource: 'Официальный Столото · OAuth · один проход · backfill 32 дня'
       };
       changed += 1;
     }
@@ -708,7 +674,7 @@ try {
   const page = await context.newPage();
 
   await login(page);
-  const officialMap = await readArchiveThreeTimes(page, minTargetDraw, requiredDraws);
+  const officialMap = await readArchiveOnce(page, minTargetDraw, requiredDraws);
   const { output, changed } = applyOfficialBackfill(
     historyRaw,
     history,
