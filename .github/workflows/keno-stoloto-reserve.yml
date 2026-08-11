@@ -1,0 +1,58 @@
+name: Column Matrix · Stoloto RESERVE
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "2-59/5 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: column-matrix-stoloto-auto
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Получить файлы репозитория
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Установить Playwright
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Столото · 3 проверки · обновить историю Матрицы столбов
+        env:
+          STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
+          STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
+        run: node stoloto-column-matrix-update.mjs
+
+      - name: Сохранить только проверенные новые тиражи
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- keno-history.json; then
+            echo "Новых тиражей нет"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add keno-history.json
+          git commit -m "Столото · Матрица столбов · резервное автообновление"
+          git push
