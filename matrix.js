@@ -4,7 +4,6 @@
   const STORAGE_KEY = 'pozitron_column_matrix_draws_v1';
   const URL_KEY = 'pozitron_column_matrix_source_v1';
   const INTERVAL_KEY = 'pozitron_column_matrix_interval_v1';
-  const LEGACY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-keno-v72/main/keno-history.json';
   const DEFAULT_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
 
   let draws = [];
@@ -35,6 +34,19 @@
     return String(v || '').match(/\d{1,2}:\d{2}(?::\d{2})?/)?.[0] || '';
   }
 
+  function normParity(v) {
+    const s = String(v || '').trim();
+    if (/^Больше ч[её]тных$/i.test(s)) return 'Больше чётных';
+    if (/^Больше неч[её]тных$/i.test(s)) return 'Больше нечётных';
+    if (/^Поровну$/i.test(s)) return 'Поровну';
+    return '';
+  }
+
+  function normColumn(v) {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
+  }
+
   function valid(obj) {
     const draw = Number(obj?.draw ?? obj?.number ?? obj?.drawNumber ?? obj?.id);
     const date = normDate(obj?.date ?? obj?.drawDate ?? obj?.datetime ?? '');
@@ -42,8 +54,15 @@
     let balls = obj?.balls ?? obj?.numbers ?? obj?.results ?? obj?.result ?? obj?.winningNumbers;
     if (typeof balls === 'string') balls = (balls.match(/\d+/g) || []).map(Number);
     balls = (balls || []).map(Number).slice(0, 20);
+
     if (!Number.isFinite(draw) || balls.length !== 20 || !balls.every(n => n >= 1 && n <= 80)) return null;
-    return { draw, date, time, balls };
+
+    // ВАЖНО: официальный победивший столб и parity только читаем из history.
+    // Ничего не вычисляем из 20 чисел.
+    const column = normColumn(obj?.column);
+    const parity = normParity(obj?.parity);
+
+    return { draw, date, time, balls, column, parity };
   }
 
   function walk(value, out = []) {
@@ -80,6 +99,8 @@
     }
   }
 
+  // counts() нужен только для старой аналитики групп 0/1/2/3/4+.
+  // Победивший столб через counts() НЕ определяется.
   function counts(draw) {
     const out = Array(11).fill(0);
     (draw?.balls || []).forEach(n => out[colOf(n)] += 1);
@@ -87,34 +108,24 @@
   }
 
   function winner(draw) {
-    const c = counts(draw);
-    const max = Math.max(...c.slice(1));
-    const reached = Array(11).fill(999);
-    for (let col = 1; col <= 10; col += 1) {
-      if (c[col] !== max) continue;
-      let seen = 0;
-      for (let i = 0; i < draw.balls.length; i += 1) {
-        if (colOf(draw.balls[i]) === col) seen += 1;
-        if (seen === max) {
-          reached[col] = i;
-          break;
-        }
-      }
-    }
-    let w = 1;
-    for (let col = 2; col <= 10; col += 1) {
-      if (c[col] > c[w] || (c[col] === c[w] && reached[col] < reached[w])) w = col;
-    }
-    return w;
+    return normColumn(draw?.column);
   }
 
   function save() {
-    const compact = draws.slice(-1200);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact));
-    } catch (_) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(compact.slice(-600)));
+    // localStorage используется только как небольшой быстрый кэш.
+    // Основная база всегда читается из keno-history.json репозитория.
+    const sizes = [1200, 600, 300, 150];
+    try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+
+    for (const size of sizes) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(draws.slice(-size)));
+        return;
+      } catch (_) {
+        try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+      }
     }
+    // Если браузер вообще не даёт место — работа продолжается без кэша.
   }
 
   function load() {
@@ -162,11 +173,14 @@
 
   function frequency(rows) {
     const f = Array(11).fill(0);
-    rows.forEach(d => f[winner(d)] += 1);
+    rows.forEach(d => {
+      const w = winner(d);
+      if (w) f[w] += 1;
+    });
     return f;
   }
 
-  function renderHead(rows) {
+  function renderHead() {
     $('matrixHead').innerHTML = `
       <tr>
         <th>Тираж</th>
@@ -175,14 +189,13 @@
       </tr>`;
   }
 
-
   function groupLabel(count) {
     return count >= 4 ? '4+' : String(count);
   }
 
   function groupDetails(drawIndex, winnerCol) {
     const prev = drawIndex > 0 ? draws[drawIndex - 1] : null;
-    if (!prev) {
+    if (!prev || !winnerCol) {
       return { group:'—', columns:[], numbers:[] };
     }
     const c = counts(prev);
@@ -208,29 +221,21 @@
     popup.hidden = false;
 
     const r = cell.getBoundingClientRect();
-    const pad = 8;
+    const padPx = 8;
     const w = popup.offsetWidth;
     const h = popup.offsetHeight;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // Сначала пробуем справа от клетки.
     let left = r.right + 8;
     let top = r.top - 8;
 
-    // Если справа тесно — слева.
-    if (left + w > vw - pad) left = r.left - w - 8;
-
-    // Если и слева тесно — под строкой.
-    if (left < pad) {
-      left = Math.max(pad, Math.min(r.left, vw - w - pad));
+    if (left + w > vw - padPx) left = r.left - w - 8;
+    if (left < padPx) {
+      left = Math.max(padPx, Math.min(r.left, vw - w - padPx));
       top = r.bottom + 8;
     }
-
-    // Если снизу не помещается — поднимаем выше.
-    if (top + h > vh - pad) {
-      top = Math.max(pad, r.top - h - 8);
-    }
+    if (top + h > vh - padPx) top = Math.max(padPx, r.top - h - 8);
 
     popup.style.left = `${Math.round(left)}px`;
     popup.style.top = `${Math.round(top)}px`;
@@ -263,7 +268,7 @@
         const isWin = col === w;
         return `<td class="cell ${isWin ? 'win' : ''}"
           ${isWin ? `data-win-draw="${d.draw}" data-win-col="${col}"` : ''}
-          title="${isWin ? `победил ст${col} — нажмите для группы выхода` : `ст${col}`}">${isWin ? col : ''}</td>`;
+          title="${isWin ? `официальный Столото: ст${col} — нажмите для группы выхода` : (w ? `ст${col}` : 'официальный столбец отсутствует в старой записи')}">${isWin ? col : ''}</td>`;
       }).join('');
 
       return `<tr>
@@ -274,27 +279,23 @@
     }).join('');
 
     document.querySelectorAll('[data-win-draw]').forEach(cell => {
-      cell.onclick = (event) => {
+      cell.onclick = event => {
         event.stopPropagation();
-        showWinnerPopup(
-          cell,
-          Number(cell.dataset.winDraw),
-          Number(cell.dataset.winCol)
-        );
+        showWinnerPopup(cell, Number(cell.dataset.winDraw), Number(cell.dataset.winCol));
       };
     });
   }
 
   function renderStats(rows) {
     const f = frequency(rows);
-    const total = rows.length || 1;
+    const officialRows = rows.filter(d => winner(d)).length;
+    const total = officialRows || 1;
     $('statsRows').innerHTML = Array.from({length:10},(_,i) => {
       const c = i + 1;
       const pct = Math.round(f[c] * 100 / total);
-      return `<div class="row"><b>ст${c}</b> — ${f[c]} из ${rows.length} · ${pct}%</div>`;
+      return `<div class="row"><b>ст${c}</b> — ${f[c]} из ${officialRows} · ${pct}%</div>`;
     }).join('');
   }
-
 
   function dateKeyToMs(dateKey) {
     const m = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -340,6 +341,7 @@
   }
 
   function yuliaColorClass(data, dateKey, time, timeIndex, value) {
+    if (!value) return '';
     const { byDate, times } = data;
     const prev1 = shiftDateKey(dateKey, -1);
     const prev2 = shiftDateKey(dateKey, -2);
@@ -384,12 +386,13 @@
         if (!d) return '<td></td>';
 
         const w = winner(d);
-        const cls = yuliaColorClass(data, dateKey, time, timeIndex, w);
+        if (!w) return '<td></td>';
 
+        const cls = yuliaColorClass(data, dateKey, time, timeIndex, w);
         return `<td class="yulia-cell ${cls}"
           data-win-draw="${d.draw}"
           data-win-col="${w}"
-          title="${time} · ст${w} · нажмите для группы">${w}</td>`;
+          title="${time} · официальный Столото ст${w} · нажмите для группы">${w}</td>`;
       }).join('');
 
       return `<tr>
@@ -401,11 +404,7 @@
     $('yuliaBody').querySelectorAll('[data-win-draw]').forEach(cell => {
       cell.onclick = event => {
         event.stopPropagation();
-        showWinnerPopup(
-          cell,
-          Number(cell.dataset.winDraw),
-          Number(cell.dataset.winCol)
-        );
+        showWinnerPopup(cell, Number(cell.dataset.winDraw), Number(cell.dataset.winCol));
       };
     });
   }
@@ -415,7 +414,6 @@
 
     $('matrixView')?.classList.toggle('active', activeView === 'matrix');
     $('yuliaView')?.classList.toggle('active', activeView === 'yulia');
-
     $('matrixViewBtn')?.classList.toggle('active', activeView === 'matrix');
     $('yuliaViewBtn')?.classList.toggle('active', activeView === 'yulia');
 
@@ -427,14 +425,15 @@
     closeMatrixPopup();
     renderDates();
     const rows = selectedRows();
-    renderHead(rows);
+    renderHead();
     renderBody(rows);
     renderStats(rows);
     renderYulia();
 
     if (draws.length) {
       const last = draws.at(-1);
-      $('status').textContent = `База: ${draws.length.toLocaleString('ru-RU')} · последний №${last.draw} · ${showDate(last.date)} ${last.time || ''}`;
+      const official = winner(last) ? ` · Столбец ${winner(last)}` : '';
+      $('status').textContent = `База: ${draws.length.toLocaleString('ru-RU')} · последний №${last.draw} · ${showDate(last.date)} ${last.time || ''}${official}`;
     } else {
       $('status').textContent = 'База пока пустая';
     }
@@ -442,8 +441,10 @@
 
   function sourceUrl() {
     const saved = (localStorage.getItem(URL_KEY) || '').trim();
-    if (!saved || saved === LEGACY_URL) {
-      localStorage.setItem(URL_KEY, DEFAULT_URL);
+
+    // Автоматически убираем старую ссылку на KENO 7.2 из браузера.
+    if (!saved || saved.includes('/pozitron-keno-v72/')) {
+      try { localStorage.setItem(URL_KEY, DEFAULT_URL); } catch (_) {}
       return DEFAULT_URL;
     }
     return saved;
@@ -462,17 +463,11 @@
     const saved = sourceUrl();
     $('status').textContent = 'Проверяю новые тиражи…';
     try {
-      let incoming;
-      try {
-        incoming = await fetchSource(saved);
-      } catch (primaryError) {
-        // Пока cron ещё не создал локальную копию, временно читаем старый источник.
-        if (saved !== DEFAULT_URL) throw primaryError;
-        incoming = await fetchSource(LEGACY_URL);
-      }
+      const incoming = await fetchSource(saved);
       const added = merge(incoming);
       render();
-      $('status').textContent = `Обновлено · добавлено ${added} · всего ${draws.length}`;
+      const officialCount = draws.filter(d => winner(d)).length;
+      $('status').textContent = `Обновлено · добавлено ${added} · всего ${draws.length} · официальных столбцов ${officialCount}`;
     } catch (e) {
       render();
       $('status').textContent = 'Обновление не выполнено: ' + e.message;
@@ -502,12 +497,9 @@
   window.addEventListener('resize', closeMatrixPopup);
   window.addEventListener('scroll', closeMatrixPopup, true);
 
-
   $('matrixViewBtn').onclick = () => switchView('matrix');
   $('yuliaViewBtn').onclick = () => switchView('yulia');
-  $('homeBtn').onclick = () => {
-    window.scrollTo({top:0,behavior:'smooth'});
-  };
+  $('homeBtn').onclick = () => window.scrollTo({top:0,behavior:'smooth'});
   $('yuliaDays').onchange = renderYulia;
   $('limitSelect').onchange = render;
   $('dateSelect').onchange = render;
