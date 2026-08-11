@@ -222,7 +222,7 @@ async function expandArchiveToDraw(page, minTargetDraw) {
   let lastMin = Infinity;
   let stableRounds = 0;
 
-  for (let round = 0; round < 180; round += 1) {
+  for (let round = 0; round < 640; round += 1) {
     const state = await page.locator('body').evaluate(target => {
       const nums = [...document.body.innerText.matchAll(/№\s*(\d{4,})/g)]
         .map(m => Number(m[1]))
@@ -599,12 +599,12 @@ function validOfficialParity(value) {
   return ['Больше чётных', 'Больше нечётных', 'Поровну'].includes(parseParity(value || ''));
 }
 
-function selectLast30Dates(history) {
+function selectLast32Dates(history) {
   const dates = [];
   for (const row of history) {
     if (!dates.includes(row.date)) dates.push(row.date);
   }
-  return new Set(dates.slice(-30));
+  return new Set(dates.slice(-32));
 }
 
 function compareTrustedBase(historyRow, officialRow) {
@@ -660,13 +660,13 @@ function applyOfficialBackfill(historyRaw, history, officialMap, targetDates) {
         column: official.column,
         parity: official.parity,
         source: row.original?.source || 'Официальный Столото · OAuth · тройная проверка',
-        officialFieldsSource: 'Официальный Столото · OAuth · тройная проверка · backfill 30 дней'
+        officialFieldsSource: 'Официальный Столото · OAuth · тройная проверка · backfill 32 дня'
       };
       changed += 1;
     }
   }
 
-  console.log(`Проверено ${checked} тиражей за последние 30 дат; дополнено ${changed}`);
+  console.log(`Проверено ${checked} тиражей за последние 32 даты; дополнено ${changed}`);
   return { output, changed, checked };
 }
 
@@ -675,11 +675,11 @@ const browser = await chromium.launch({ headless: true });
 try {
   const historyRaw = await readTrustedHistory();
   const history = trustedHistoryStrict(historyRaw);
-  const targetDates = selectLast30Dates(history);
+  const targetDates = selectLast32Dates(history);
   const targetRows = history.filter(row => targetDates.has(row.date));
 
   if (!targetRows.length) {
-    throw new Error('FAIL: не найден диапазон последних 30 дат в history');
+    throw new Error('FAIL: не найден диапазон последних 32 дат в history');
   }
 
   const minTargetDraw = targetRows[0].draw;
@@ -711,7 +711,7 @@ try {
   );
 
   if (!changed) {
-    console.log('PASS: за последние 30 дат column/parity уже заполнены официальными данными');
+    console.log('PASS: за последние 32 даты column/parity уже заполнены официальными данными');
   } else {
     await fs.writeFile(HISTORY_FILE, JSON.stringify(output) + '\n', 'utf8');
     console.log(`PASS: официальный backfill завершён; обновлено ${changed} тиражей`);
