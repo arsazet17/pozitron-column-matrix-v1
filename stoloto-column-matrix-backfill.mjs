@@ -308,17 +308,7 @@ async function expandArchiveToDraw(page, minTargetDraw) {
   }
 }
 
-async function collectRows(page, minTargetDraw) {
-  await page.goto(ARCHIVE_URL, {
-    waitUntil: 'domcontentloaded',
-    timeout: 60000
-  });
-  await page.waitForTimeout(3500);
-
-  await expandArchiveToDraw(page, minTargetDraw);
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(500);
-
+async function extractRowsFromCurrentPage(page) {
   return page.locator('body').evaluate(() => {
     const drawRx = /№\s*\d{4,}/;
     const dateRx = /^(Сегодня|Вчера|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+\d{4})?)$/i;
@@ -372,6 +362,20 @@ async function collectRows(page, minTargetDraw) {
       };
     });
   });
+}
+
+async function collectRows(page, minTargetDraw) {
+  await page.goto(ARCHIVE_URL, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000
+  });
+  await page.waitForTimeout(3500);
+
+  await expandArchiveToDraw(page, minTargetDraw);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+
+  return extractRowsFromCurrentPage(page);
 }
 
 function parseRows(rawRows) {
@@ -453,6 +457,62 @@ function comparable(row) {
   });
 }
 
+async function readSpecificOfficialDraw(page, draw) {
+  const directUrl = `${ARCHIVE_URL}${draw}`;
+  console.log(`Точечно: запрашиваю официальный тираж №${draw}`);
+
+  await page.goto(directUrl, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000
+  });
+  await page.waitForTimeout(2200);
+
+  let parsed = parseRows(await extractRowsFromCurrentPage(page));
+  let exact = parsed.find(row => row.draw === draw);
+  if (exact) {
+    console.log(`Точечно PASS: №${draw} найден через ${directUrl}`);
+    return exact;
+  }
+
+  // Резерв внутри той же точечной страницы: используем официальный фильтр по номеру.
+  const inputs = page.locator('input');
+  const count = await inputs.count();
+  let drawInput = null;
+
+  for (let i = 0; i < count; i += 1) {
+    const input = inputs.nth(i);
+    const meta = [
+      await input.getAttribute('name'),
+      await input.getAttribute('placeholder'),
+      await input.getAttribute('aria-label'),
+      await input.getAttribute('id')
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    if (/тираж|draw|number|num/.test(meta)) {
+      drawInput = input;
+      break;
+    }
+  }
+
+  if (drawInput) {
+    await drawInput.fill(String(draw));
+    const findButton = page.getByRole('button', { name: /найти|поиск/i }).last();
+    if (await findButton.count()) {
+      await findButton.click();
+      await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(1800);
+      parsed = parseRows(await extractRowsFromCurrentPage(page));
+      exact = parsed.find(row => row.draw === draw);
+      if (exact) {
+        console.log(`Точечно PASS: №${draw} найден через официальный фильтр`);
+        return exact;
+      }
+    }
+  }
+
+  throw new Error(`FAIL: Столото не отдал точечный тираж №${draw}`);
+}
+
 async function readArchiveOnce(page, minTargetDraw, requiredDraws) {
   const rawRows = await collectRows(page, minTargetDraw);
   const parsed = parseRows(rawRows);
@@ -462,19 +522,40 @@ async function readArchiveOnce(page, minTargetDraw, requiredDraws) {
   }
 
   const officialMap = new Map(parsed.map(row => [row.draw, row]));
-  const missingRequired = [...requiredDraws].filter(draw => !officialMap.has(draw));
+  let missingRequired = [...requiredDraws]
+    .filter(draw => !officialMap.has(draw))
+    .sort((a, b) => a - b);
+
+  console.log(
+    `Основной проход: ${parsed.length} тиражей, ` +
+    `диапазон №${parsed[0].draw}–№${parsed.at(-1).draw}`
+  );
 
   if (missingRequired.length) {
+    console.log(
+      `Основной проход пропустил ${missingRequired.length}: ` +
+      missingRequired.map(n => `№${n}`).join(', ') +
+      '. Забираю только эти номера точечно, весь архив заново не открываю.'
+    );
+
+    for (const draw of missingRequired) {
+      const exact = await readSpecificOfficialDraw(page, draw);
+      officialMap.set(draw, exact);
+    }
+  }
+
+  missingRequired = [...requiredDraws].filter(draw => !officialMap.has(draw));
+  if (missingRequired.length) {
     throw new Error(
-      `FAIL: после одного чтения нет ${missingRequired.length} нужных тиражей: ` +
+      `FAIL: после основного прохода и точечного добора нет ` +
+      `${missingRequired.length} нужных тиражей: ` +
       missingRequired.slice(0, 25).map(n => `№${n}`).join(', ')
     );
   }
 
   console.log(
-    `Одно чтение PASS: ${parsed.length} тиражей, ` +
-    `диапазон №${parsed[0].draw}–№${parsed.at(-1).draw}; ` +
-    `все ${requiredDraws.size} нужных тиражей найдены`
+    `PASS: все ${requiredDraws.size} нужных тиражей получены официально; ` +
+    `повторного полного прохода не было`
   );
 
   return officialMap;
@@ -631,8 +712,8 @@ function applyOfficialBackfill(historyRaw, history, officialMap, targetDates) {
         ...row.original,
         column: official.column,
         parity: official.parity,
-        source: row.original?.source || 'Официальный Столото · OAuth · один проход',
-        officialFieldsSource: 'Официальный Столото · OAuth · один проход · backfill 32 дня'
+        source: row.original?.source || 'Официальный Столото · OAuth · один проход + точечный добор',
+        officialFieldsSource: 'Официальный Столото · OAuth · один проход + точечный добор · backfill 32 дня'
       };
       changed += 1;
     }
