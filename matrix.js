@@ -440,14 +440,14 @@
   }
 
   function sourceUrl() {
+    // Для Матрицы столбов единственный штатный источник —
+    // её собственный keno-history.json.
+    // Старое пользовательское значение источника автоматически заменяется.
     const saved = (localStorage.getItem(URL_KEY) || '').trim();
-
-    // Автоматически убираем старую ссылку на KENO 7.2 из браузера.
-    if (!saved || saved.includes('/pozitron-keno-v72/')) {
+    if (saved !== DEFAULT_URL) {
       try { localStorage.setItem(URL_KEY, DEFAULT_URL); } catch (_) {}
-      return DEFAULT_URL;
     }
-    return saved;
+    return DEFAULT_URL;
   }
 
   async function fetchSource(url) {
@@ -521,8 +521,19 @@
     update();
   };
 
+
+  function ensureOfficialAiModule() {
+    if (document.querySelector('script[data-pozitron-ai]')) return;
+    const s = document.createElement('script');
+    s.src = `ai-analyzer.js?v=stoloto-200`;
+    s.defer = true;
+    s.dataset.pozitronAi = '1';
+    document.head.appendChild(s);
+  }
+
   load();
   render();
   setupAuto();
+  ensureOfficialAiModule();
   setTimeout(update, 500);
 })();
