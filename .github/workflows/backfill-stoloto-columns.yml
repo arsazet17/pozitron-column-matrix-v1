@@ -1,4 +1,4 @@
-name: Column Matrix · Stoloto BACKFILL 32 DAYS · SINGLE PASS
+name: Column Matrix · Stoloto BACKFILL 32 DAYS · ONE PASS FIX
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
           npm install playwright
           npx playwright install --with-deps chromium
 
-      - name: Столото · backfill 32 даты · ОДИН ПРОХОД
+      - name: Столото · backfill 32 даты · ОДИН ПРОХОД + точечный добор
         env:
           STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
           STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
@@ -51,5 +51,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add keno-history.json
-          git commit -m "Столото · backfill 32 дня · один проход"
+          git commit -m "Столото · backfill 32 дня · one pass fix"
           git push
