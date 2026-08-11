@@ -7,7 +7,9 @@ import process from 'node:process';
 import { chromium } from 'playwright';
 
 const LOGIN_URL = 'https://oauth.stoloto.ru/login';
-const ARCHIVE_URL = 'https://m.stoloto.ru/keno2/archive/';
+// Одноразовый глубокий backfill: официальный desktop-архив Столото.
+// Штатный авто-updater приложения остаётся на m.stoloto.ru.
+const ARCHIVE_URL = 'https://www.stoloto.ru/keno2/archive/';
 const HISTORY_FILE = 'keno-history.json';
 
 const EMAIL = process.env.STOLOTO_EMAIL || '';
@@ -220,9 +222,10 @@ async function login(page) {
 
 async function expandArchiveToDraw(page, minTargetDraw) {
   let lastMin = Infinity;
+  let lastLoggedMin = null;
   let stableRounds = 0;
 
-  for (let round = 0; round < 640; round += 1) {
+  for (let round = 0; round < 240; round += 1) {
     const state = await page.locator('body').evaluate(target => {
       const nums = [...document.body.innerText.matchAll(/№\s*(\d{4,})/g)]
         .map(m => Number(m[1]))
@@ -237,9 +240,12 @@ async function expandArchiveToDraw(page, minTargetDraw) {
     }, minTargetDraw);
 
     if (state.min !== null) {
-      console.log(
-        `Архив: ${state.count} тиражей в DOM, диапазон №${state.min}–№${state.max}`
-      );
+      if (state.min !== lastLoggedMin) {
+        console.log(
+          `Архив: ${state.count} тиражей в DOM, диапазон №${state.min}–№${state.max}`
+        );
+        lastLoggedMin = state.min;
+      }
       if (state.hasTarget || state.min <= minTargetDraw) return;
 
       if (state.min === lastMin) stableRounds += 1;
@@ -255,7 +261,7 @@ async function expandArchiveToDraw(page, minTargetDraw) {
       try {
         if (await moreButton.isVisible()) {
           await moreButton.click({ timeout: 5000 });
-          await page.waitForTimeout(1200);
+          await page.waitForTimeout(750);
           continue;
         }
       } catch (_) {}
@@ -269,16 +275,16 @@ async function expandArchiveToDraw(page, minTargetDraw) {
       try {
         if (await moreLink.isVisible()) {
           await moreLink.click({ timeout: 5000 });
-          await page.waitForTimeout(1200);
+          await page.waitForTimeout(750);
           continue;
         }
       } catch (_) {}
     }
 
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(700);
 
-    if (stableRounds >= 6) break;
+    if (stableRounds >= 4) break;
   }
 
   const finalState = await page.locator('body').evaluate(target => {
@@ -694,10 +700,10 @@ try {
   const context = await browser.newContext({
     locale: 'ru-RU',
     timezoneId: 'Europe/Moscow',
-    viewport: { width: 390, height: 844 },
+    viewport: { width: 1365, height: 900 },
     userAgent:
-      'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 ' +
-      'Chrome/131 Mobile Safari/537.36'
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+      'Chrome/131.0.0.0 Safari/537.36'
   });
   const page = await context.newPage();
 
