@@ -1,4 +1,4 @@
-name: Column Matrix · Stoloto BACKFILL 32 DAYS
+name: Column Matrix · Stoloto BACKFILL 32 DAYS · DESKTOP FIX
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       - name: Получить файлы репозитория
