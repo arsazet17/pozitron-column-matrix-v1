@@ -23,6 +23,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Синхронизировать с актуальным main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B main origin/main
+          git reset --hard origin/main
+
       - name: Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -36,23 +44,56 @@ jobs:
 
       - name: Столото · 3 проверки · обновить историю Матрицы столбов
         env:
-          STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
-          STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
+          STOLOTO_EMAIL: ${ secrets.STOLOTO_EMAIL }
+          STOLOTO_PASSWORD: ${ secrets.STOLOTO_PASSWORD }
         run: node stoloto-column-matrix-update.mjs
 
       - name: Сохранить только проверенные новые тиражи
         shell: bash
+        env:
+          STOLOTO_EMAIL: ${ secrets.STOLOTO_EMAIL }
+          STOLOTO_PASSWORD: ${ secrets.STOLOTO_PASSWORD }
         run: |
           set -euo pipefail
-
-          if git diff --quiet -- keno-history.json; then
-            echo "Новых тиражей нет"
-            exit 0
-          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add keno-history.json
-          git commit -m "Столото · Матрица столбов · автообновление"
-          git push
+          commit_if_needed() {
+            if git diff --quiet -- keno-history.json; then
+              echo "Новых тиражей нет"
+              return 1
+            fi
+            git add keno-history.json
+            git commit -m "Столото · Матрица столбов · автообновление"
+            return 0
+          }
+
+          if ! commit_if_needed; then
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            echo "Попытка push ${attempt}/3"
+
+            if git push origin HEAD:main; then
+              echo "Push PASS"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "ERROR: не удалось сохранить после 3 попыток"
+              exit 1
+            fi
+
+            echo "main изменилась — беру свежую версию и повторяю updater"
+            git fetch origin main
+            git reset --hard origin/main
+
+            node stoloto-column-matrix-update.mjs
+
+            if ! commit_if_needed; then
+              echo "Другой запуск уже сохранил эти тиражи — PASS"
+              exit 0
+            fi
+          done
