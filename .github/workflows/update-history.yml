@@ -44,15 +44,15 @@ jobs:
 
       - name: Столото · 3 проверки · обновить историю Матрицы столбов
         env:
-          STOLOTO_EMAIL: ${ secrets.STOLOTO_EMAIL }
-          STOLOTO_PASSWORD: ${ secrets.STOLOTO_PASSWORD }
+          STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
+          STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
         run: node stoloto-column-matrix-update.mjs
 
       - name: Сохранить только проверенные новые тиражи
         shell: bash
         env:
-          STOLOTO_EMAIL: ${ secrets.STOLOTO_EMAIL }
-          STOLOTO_PASSWORD: ${ secrets.STOLOTO_PASSWORD }
+          STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
+          STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -64,6 +64,7 @@ jobs:
               echo "Новых тиражей нет"
               return 1
             fi
+
             git add keno-history.json
             git commit -m "Столото · Матрица столбов · автообновление"
             return 0
