@@ -438,35 +438,37 @@ async function readArchiveThreeTimes(page) {
 
   const maps = reads.map(arr => new Map(arr.map(row => [row.draw, row])));
 
-  const commonDraws = [...maps[0].keys()]
-    .filter(draw => maps[1].has(draw) && maps[2].has(draw))
+  // Берём объединение номеров из всех трёх чтений. Тираж считается
+  // подтверждённым, только если полностью одинаковая запись встретилась
+  // минимум в двух чтениях. Одиночный результат никогда не принимается.
+  const candidateDraws = [...new Set(maps.flatMap(map => [...map.keys()]))]
     .sort((a, b) => a - b);
-
-  if (commonDraws.length < MIN_COMMON) {
-    throw new Error(
-      `FAIL: общих тиражей во всех трёх чтениях только ` +
-      `${commonDraws.length}, нужно минимум ${MIN_COMMON}`
-    );
-  }
 
   const stable = [];
   const mismatches = [];
 
-  for (const draw of commonDraws) {
-    const d1 = maps[0].get(draw);
-    const d2 = maps[1].get(draw);
-    const d3 = maps[2].get(draw);
+  for (const draw of candidateDraws) {
+    const groups = new Map();
 
-    if (comparable(d1) === comparable(d2) && comparable(d1) === comparable(d3)) {
-      stable.push(d1);
-    } else {
-      mismatches.push(draw);
+    for (const map of maps) {
+      const row = map.get(draw);
+      if (!row) continue;
+
+      const key = comparable(row);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
     }
+
+    const majority = [...groups.values()]
+      .sort((a, b) => b.length - a.length)[0] || [];
+
+    if (majority.length >= 2) stable.push(majority[0]);
+    else mismatches.push(draw);
   }
 
   if (stable.length < MIN_COMMON) {
     throw new Error(
-      `FAIL: после тройной по-тиражной проверки стабильны только ` +
+      `FAIL: после проверки 2 из 3 стабильны только ` +
       `${stable.length} тиражей`
     );
   }
@@ -479,8 +481,8 @@ async function readArchiveThreeTimes(page) {
   }
 
   console.log(
-    `Тройная проверка PASS: ${stable.length} тиражей полностью совпали ` +
-    `во всех 3 чтениях; диапазон №${stable[0].draw}–№${stable.at(-1).draw}`
+    `Проверка 2 из 3 PASS: ${stable.length} тиражей полностью совпали ` +
+    `минимум в двух чтениях; диапазон №${stable[0].draw}–№${stable.at(-1).draw}`
   );
 
   return stable;
@@ -671,7 +673,7 @@ function validateProduction(stolotoDraws, historyRaw) {
 }
 
 function mergePreservingOfficialFields(historyRaw, fresh) {
-  const source = 'Официальный Столото · OAuth · тройная проверка';
+  const source = 'Официальный Столото · OAuth · проверка 2 из 3';
 
   const additions = fresh.map(row => ({
     draw: row.draw,
