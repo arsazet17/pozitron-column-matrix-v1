@@ -5,9 +5,20 @@
   const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'OPENAI-EXTERNAL-4.0-FULL-ARCHIVE';
+  const VERSION = 'OPENAI-EXTERNAL-4.1-FULL-ARCHIVE';
+  const MATRIX_REFRESH_MS = 60000;
 
   const $ = id => document.getElementById(id);
+
+
+
+  function forceMainMatrixRefresh() {
+    try {
+      localStorage.setItem('pozitron_column_matrix_interval_v1', String(MATRIX_REFRESH_MS));
+    } catch (_) {}
+    const btn = $('syncBtn') || $('syncBtn2');
+    if (btn && !btn.disabled) btn.click();
+  }
 
   function safeJson(raw, fallback) {
     try { return JSON.parse(raw); } catch (_) { return fallback; }
@@ -721,5 +732,14 @@
 
   injectUi();
   refreshUi();
-  setInterval(refreshUi, 60000);
+
+  // Всегда держим основную Матрицу на минутном обновлении.
+  // Дополнительно перепроверяем сразу после возврата в приложение.
+  setTimeout(forceMainMatrixRefresh, 1200);
+  setInterval(forceMainMatrixRefresh, MATRIX_REFRESH_MS);
+  setInterval(refreshUi, MATRIX_REFRESH_MS);
+  window.addEventListener('focus', () => { forceMainMatrixRefresh(); refreshUi(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { forceMainMatrixRefresh(); refreshUi(); }
+  });
 })();
