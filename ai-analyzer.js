@@ -2,9 +2,10 @@
 
 (() => {
   const STORAGE_KEY = 'pozitron_column_matrix_draws_v1';
+  const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'OPENAI-EXTERNAL-2.0';
+  const VERSION = 'OPENAI-EXTERNAL-3.0-FULL-ARCHIVE';
 
   const $ = id => document.getElementById(id);
 
@@ -37,14 +38,45 @@
     };
   }
 
-  function loadDraws() {
-    const raw = safeJson(localStorage.getItem(STORAGE_KEY) || '[]', []);
+  function dedupeDraws(items) {
     const map = new Map();
-    (Array.isArray(raw) ? raw : []).forEach(item => {
+    (Array.isArray(items) ? items : []).forEach(item => {
       const d = normalizeDraw(item);
       if (d) map.set(d.draw, d);
     });
     return [...map.values()].sort((a, b) => a.draw - b.draw);
+  }
+
+  function walkHistory(value, out = []) {
+    if (Array.isArray(value)) {
+      value.forEach(v => walkHistory(v, out));
+      return out;
+    }
+    if (value && typeof value === 'object') {
+      const d = normalizeDraw(value);
+      if (d) out.push(d);
+      else Object.values(value).forEach(v => {
+        if (v && typeof v === 'object') walkHistory(v, out);
+      });
+    }
+    return out;
+  }
+
+  function loadDraws() {
+    // Только аварийный локальный резерв для показа UI.
+    // Сам прогноз всегда пытается читать полный свежий архив GitHub.
+    const raw = safeJson(localStorage.getItem(STORAGE_KEY) || '[]', []);
+    return dedupeDraws(raw);
+  }
+
+  async function fetchFullHistory() {
+    const url = `${HISTORY_URL}?ts=${Date.now()}`;
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Архив GitHub: HTTP ${response.status}`);
+    const payload = await response.json();
+    const draws = dedupeDraws(walkHistory(payload));
+    if (!draws.length) throw new Error('В полном архиве не найдены официальные столбцы');
+    return draws;
   }
 
   function loadArchive() {
@@ -111,7 +143,7 @@
   }
 
   function columnStats(draws, windowSize = 250) {
-    const recent = draws.slice(-windowSize);
+    const recent = windowSize ? draws.slice(-windowSize) : draws;
     const frequency = Array(11).fill(0);
     const lastSeen = Array(11).fill(null);
 
@@ -122,9 +154,7 @@
 
     const gaps = {};
     for (let col = 1; col <= 10; col++) {
-      gaps[col] = lastSeen[col] == null
-        ? recent.length
-        : recent.length - 1 - lastSeen[col];
+      gaps[col] = lastSeen[col] == null ? recent.length : recent.length - 1 - lastSeen[col];
     }
 
     return {
@@ -134,37 +164,118 @@
     };
   }
 
+  const SMALL_MIRROR = {1:5,5:1,2:4,4:2,6:10,10:6,7:9,9:7};
+  const BIG_MIRROR = {1:6,6:1,2:7,7:2,3:8,8:3,4:9,9:4,5:10,10:5};
+
+  function patternSummary(draws) {
+    const wins = draws.map(d => d.column);
+    const trans = Array.from({length: 11}, () => Array(11).fill(0));
+    let repeats = 0, return1 = 0, return2 = 0, return3 = 0;
+    let smallMirror = 0, bigMirror = 0, stepContinue = 0;
+    let even = 0, odd = 0;
+
+    for (let i = 0; i < wins.length; i++) {
+      const cur = wins[i];
+      cur % 2 === 0 ? even++ : odd++;
+      if (i > 0) {
+        const prev = wins[i - 1];
+        trans[prev][cur]++;
+        if (cur === prev) repeats++;
+        if (SMALL_MIRROR[prev] === cur) smallMirror++;
+        if (BIG_MIRROR[prev] === cur) bigMirror++;
+      }
+      if (i > 1 && cur === wins[i - 2]) return1++;
+      if (i > 2 && cur === wins[i - 3]) return2++;
+      if (i > 3 && cur === wins[i - 4]) return3++;
+      if (i > 2) {
+        const a = wins[i - 2], b = wins[i - 1];
+        if (b + (b - a) === cur) stepContinue++;
+      }
+    }
+
+    const topTransitions = [];
+    for (let a = 1; a <= 10; a++) {
+      const rowTotal = trans[a].slice(1).reduce((x,y)=>x+y,0);
+      const row = [];
+      for (let b = 1; b <= 10; b++) row.push({to:b, count:trans[a][b]});
+      row.sort((x,y)=>y.count-x.count || x.to-y.to);
+      topTransitions.push({from:a, total:rowTotal, top:row.slice(0,4)});
+    }
+
+    const last = wins.at(-1);
+    const gapSeries = {};
+    for (let col = 1; col <= 10; col++) {
+      const positions = [];
+      wins.forEach((w,i) => { if (w === col) positions.push(i); });
+      const gaps = [];
+      for (let i = 1; i < positions.length; i++) gaps.push(positions[i] - positions[i-1]);
+      gapSeries[col] = {
+        current: positions.length ? wins.length - 1 - positions.at(-1) : wins.length,
+        median: median(gaps),
+        max: gaps.length ? Math.max(...gaps) : null
+      };
+    }
+
+    return {
+      totalOfficialDraws: wins.length,
+      lastColumn: last,
+      repeats,
+      returnAfter1: return1,
+      returnAfter2: return2,
+      returnAfter3: return3,
+      smallMirrorHits: smallMirror,
+      bigMirrorHits: bigMirror,
+      stepContinuations: stepContinue,
+      parity: {even, odd},
+      topTransitions,
+      gapSeries
+    };
+  }
+
   function buildPayload(draws, target) {
     const latest = draws.at(-1);
+    const compactWholeArchive = draws.map(d => `${d.draw}:${d.column}`).join(',');
+    const lastFull = draws.slice(-80).map(d => ({
+      draw: d.draw,
+      date: d.date,
+      time: d.time,
+      column: d.column,
+      parity: d.parity,
+      balls: d.balls
+    }));
+
     return {
-      task: 'column_matrix_forecast',
+      task: 'column_matrix_forecast_full_archive',
       app: 'ПОЗИТРОН · МАТРИЦА СТОЛБОВ',
       version: VERSION,
+      dataSource: 'fresh GitHub keno-history.json, cache-busted on every forecast',
+      archiveOfficialDrawCount: draws.length,
       targetDraw: target.draw,
       targetTime: target.time,
       targetDate: target.date,
       latestDraw: latest?.draw || null,
+      latestTime: latest?.time || '',
       latestOfficialColumn: latest?.column || null,
-      recentOfficialColumns: draws.slice(-300).map(d => d.column),
-      recentDraws: draws.slice(-35).map(d => ({
-        draw: d.draw,
-        date: d.date,
-        time: d.time,
-        column: d.column,
-        parity: d.parity,
-        balls: d.balls
-      })),
+      fullOfficialSequenceCompact: compactWholeArchive,
+      recentDraws: lastFull,
+      statsAll: columnStats(draws, 0),
+      stats500: columnStats(draws, 500),
       stats250: columnStats(draws, 250),
+      stats100: columnStats(draws, 100),
+      patternsAll: patternSummary(draws),
       request: [
-        'Проанализируй данные как статистический помощник. Учитывай частоты, текущие разрывы, переходы между столбцами, повторы, возвраты через 1-3 тиража, шаги последовательности, зеркальные/симметричные переходы, режим чет/нечет и последние 35 тиражей.',
-        'Не утверждай, что случайный результат можно гарантированно предсказать.',
-        'Ответ дай СТРОГО без Markdown и без звездочек в таком формате:',
+        'Перед тобой полный доступный официальный архив столбцов, а не локальный кэш телефона.',
+        'Проведи сравнение всей истории с последними 500/250/100 и особенно последними 80 тиражами.',
+        'Обязательно учитывай: переходы столбец→столбец, повторы, возвраты через 1/2/3 тиража, серии, продолжение шага и обратный шаг, малые и большие зеркала, текущие и типичные разрывы, чет/нечет, изменения частот по окнам, а также группы/числа последних тиражей.',
+        'Не выбирай столбцы только по простой частоте. Сопоставь несколько независимых сигналов и объясни, какие сигналы сошлись.',
+        'КЕНО случайно: не обещай гарантии и не изображай обучение на будущих результатах.',
+        'Ответ дай СТРОГО без Markdown и без звездочек в формате:',
         'PICKS: 4,2,9',
         'CONFIDENCE: низкий',
-        '4|краткая причина для столбца 4',
-        '2|краткая причина для столбца 2',
-        '9|краткая причина для столбца 9',
-        'SUMMARY: одно короткое итоговое пояснение.'
+        '4|кратко: какие 2-4 сигнала поддерживают столбец',
+        '2|кратко: какие 2-4 сигнала поддерживают столбец',
+        '9|кратко: какие 2-4 сигнала поддерживают столбец',
+        'SUMMARY: одно короткое итоговое пояснение, почему именно эта тройка.'
       ].join('\n')
     };
   }
@@ -311,9 +422,17 @@
     }).join('');
   }
 
-  function refreshUi() {
+  async function refreshUi() {
     injectUi();
-    const draws = loadDraws();
+    let draws;
+    try {
+      draws = await fetchFullHistory();
+      $('aiStatus').textContent = 'АРХИВ СВЕЖИЙ';
+    } catch (_) {
+      draws = loadDraws();
+      $('aiStatus').textContent = 'ЛОКАЛЬНЫЙ РЕЗЕРВ';
+    }
+
     const archive = loadArchive();
     settleArchive(archive, draws);
 
@@ -325,8 +444,8 @@
     if (latest) {
       const target = inferNextTarget(draws);
       $('aiNextHint').textContent = current
-        ? 'Прогноз зафиксирован и будет сверён автоматически.'
-        : `Следующий прогноз: тираж №${target.draw}${target.time !== '—' ? ` · ориентировочно ${target.time}` : ''}`;
+        ? `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Прогноз зафиксирован.`
+        : `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Следующий прогноз: №${target.draw}${target.time !== '—' ? ` · ориентировочно ${target.time}` : ''}`;
     }
   }
 
@@ -452,10 +571,24 @@
   }
 
   async function runExternalAnalysis() {
-    const draws = loadDraws();
-    const latest = draws.at(-1);
+    const btn = $('aiRunBtn');
+    btn.disabled = true;
+    $('aiStatus').textContent = 'ОБНОВЛЯЮ АРХИВ...';
+    $('aiSummary').textContent = 'Сначала загружаю свежий полный keno-history.json из GitHub...';
 
+    let draws;
+    try {
+      draws = await fetchFullHistory();
+    } catch (error) {
+      btn.disabled = false;
+      $('aiStatus').innerHTML = '<span class="ai-error">ОШИБКА АРХИВА</span>';
+      $('aiSummary').innerHTML = `<span class="ai-error">Не удалось получить свежий полный архив: ${escapeHtml(error?.message || error)}. Прогноз не отправлен, чтобы не использовать старые данные.</span>`;
+      return;
+    }
+
+    const latest = draws.at(-1);
     if (!latest || draws.length < 10) {
+      btn.disabled = false;
       $('aiSummary').innerHTML = '<span class="ai-error">Недостаточно официальных данных для анализа.</span>';
       return;
     }
@@ -473,9 +606,8 @@
     }
 
     const target = inferNextTarget(draws);
-    const btn = $('aiRunBtn');
     btn.disabled = true;
-    $('aiStatus').textContent = 'АНАЛИЗ...';
+    $('aiStatus').textContent = `АНАЛИЗ · ${draws.length} ТИРАЖЕЙ`;
     $('aiTarget').textContent = `ТИРАЖ №${target.draw}${target.time !== '—' ? ` · ${target.time}` : ''}`;
     $('aiSummary').textContent = 'Отправляю данные во внешний ИИ-анализатор...';
     $('aiPicks').innerHTML = '';
@@ -530,5 +662,5 @@
 
   injectUi();
   refreshUi();
-  setInterval(refreshUi, 15000);
+  setInterval(refreshUi, 60000);
 })();
