@@ -5,7 +5,7 @@
   const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'OPENAI-EXTERNAL-4.1-FULL-ARCHIVE';
+  const VERSION = 'OPENAI-EXTERNAL-5.0-OFFICIAL-SCHEDULE';
   const MATRIX_REFRESH_MS = 60000;
 
   const $ = id => document.getElementById(id);
@@ -128,31 +128,69 @@
     return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
   }
 
+  // Текущее официальное расписание КЕНО 4М. Время прогноза больше не
+  // вычисляется по среднему/медианному интервалу — только по этому списку.
+  const CURRENT_SCHEDULE = [
+    '00:02','00:17','00:32','01:02','01:17','01:32',
+    '02:02','02:17','02:32','03:02','03:32','04:02',
+    '04:17','04:32','05:02','05:17','05:32','06:02',
+    '06:17','06:32','07:02','07:32','08:02','08:17',
+    '08:32','09:02','09:17','09:32','10:02','10:17',
+    '10:32','11:02','11:32','12:02','12:17','12:32',
+    '13:02','13:17','13:32','14:02','14:17','14:32',
+    '15:02','15:32','16:02','16:17','16:32','17:02',
+    '17:17','17:32','18:02','18:17','18:32','19:02',
+    '19:32','20:02','20:17','20:32','21:02','21:17',
+    '21:32','22:02','22:17','22:32','23:02','23:32'
+  ];
+
+  function dateParts(value) {
+    const raw = String(value || '').trim();
+    let m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return { y:Number(m[1]), mo:Number(m[2]), d:Number(m[3]) };
+    m = raw.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{2}|\d{4})$/);
+    if (!m) return null;
+    const y = Number(m[3].length === 2 ? `20${m[3]}` : m[3]);
+    return { y, mo:Number(m[2]), d:Number(m[1]) };
+  }
+
+  function formatRuDate(parts) {
+    if (!parts) return '';
+    return `${String(parts.d).padStart(2,'0')}.${String(parts.mo).padStart(2,'0')}.${parts.y}`;
+  }
+
+  function addDays(parts, days) {
+    const dt = new Date(Date.UTC(parts.y, parts.mo - 1, parts.d + days));
+    return { y:dt.getUTCFullYear(), mo:dt.getUTCMonth()+1, d:dt.getUTCDate() };
+  }
+
   function inferNextTarget(draws) {
     const latest = draws.at(-1);
     if (!latest) return { draw: null, time: '—', date: '' };
 
-    const recent = draws.slice(-40);
-    const diffs = [];
-    for (let i = 1; i < recent.length; i++) {
-      const a = parseDateTime(recent[i - 1]);
-      const b = parseDateTime(recent[i]);
-      if (!a || !b) continue;
-      const mins = (b - a) / 60000;
-      if (mins > 0 && mins <= 60) diffs.push(mins);
-    }
-
-    const step = median(diffs);
-    const base = parseDateTime(latest);
-    if (!base || !step) {
+    const timeMatch = String(latest.time || '').match(/(\d{1,2}):(\d{2})/);
+    const parts = dateParts(latest.date);
+    if (!timeMatch || !parts) {
       return { draw: latest.draw + 1, time: '—', date: '' };
     }
 
-    const next = new Date(base.getTime() + step * 60000);
+    const currentMinutes = Number(timeMatch[1]) * 60 + Number(timeMatch[2]);
+    const scheduleMinutes = CURRENT_SCHEDULE.map(t => {
+      const [h,m] = t.split(':').map(Number);
+      return h * 60 + m;
+    });
+
+    let idx = scheduleMinutes.findIndex(x => x > currentMinutes);
+    let targetDate = parts;
+    if (idx < 0) {
+      idx = 0;
+      targetDate = addDays(parts, 1);
+    }
+
     return {
       draw: latest.draw + 1,
-      time: next.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-      date: next.toLocaleDateString('ru-RU')
+      time: CURRENT_SCHEDULE[idx],
+      date: formatRuDate(targetDate)
     };
   }
 
@@ -267,6 +305,8 @@
       targetDraw: target.draw,
       targetTime: target.time,
       targetDate: target.date,
+      officialSchedule: CURRENT_SCHEDULE,
+      scheduleSource: 'current official KENO 4M schedule',
       latestDraw: latest?.draw || null,
       latestTime: latest?.time || '',
       latestOfficialColumn: latest?.column || null,
@@ -478,8 +518,8 @@
             <details class="ai-history-row">
               <summary class="ai-history-summary">
                 <span class="ai-hdraw">№${rec.targetDraw}</span>
-                <span class="ai-hdate">${escapeHtml(shortDate(rec.targetDate || rec.actualDate))}</span>
-                <span class="ai-htime">${escapeHtml(rec.targetTime && rec.targetTime !== '—' ? rec.targetTime : '—')}</span>
+                <span class="ai-hdate">${escapeHtml(shortDate(rec.settled ? (rec.actualDate || rec.targetDate) : rec.targetDate))}</span>
+                <span class="ai-htime">${escapeHtml(rec.settled && rec.actualTime ? rec.actualTime.slice(0,5) : (rec.targetTime && rec.targetTime !== '—' ? rec.targetTime : '—'))}</span>
                 <span class="ai-hresult">${archiveResultIcon(rec)}</span>
                 <span class="ai-harrow">▼</span>
               </summary>
@@ -730,6 +770,8 @@
         targetDraw: target.draw,
         targetTime: target.time,
         targetDate: target.date,
+      officialSchedule: CURRENT_SCHEDULE,
+      scheduleSource: 'current official KENO 4M schedule',
         picks: parsed.picks,
         reasons: parsed.reasons,
         confidence: parsed.confidence,
