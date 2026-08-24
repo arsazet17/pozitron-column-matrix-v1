@@ -5,11 +5,11 @@
   const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'HYBRID-6.0-INTERNAL-LEARNER';
+  const VERSION = 'HYBRID-6.1-AUTO-INTERNAL';
   const MATRIX_REFRESH_MS = 60000;
 
   const $ = id => document.getElementById(id);
-
+  let internalAutoBusy = false;
 
 
   function forceMainMatrixRefresh() {
@@ -653,8 +653,8 @@
     $('aiTarget').textContent = target;
 
     if (!rec) {
-      $('aiPicks').innerHTML = '<div class="ai-empty">Выберите «Внутренний» или «Внешний OpenAI».</div>';
-      $('aiSummary').textContent = 'Два независимых алгоритма могут дать прогноз на один и тот же тираж.';
+      $('aiPicks').innerHTML = '<div class="ai-empty">Внутренний прогноз создаётся автоматически. Внешний OpenAI запускается вручную.</div>';
+      $('aiSummary').textContent = 'Внутренний алгоритм работает постоянно; OpenAI подключается вручную для независимого сравнения.';
       $('aiConfidence').textContent = '—';
       return;
     }
@@ -735,31 +735,91 @@
     </div>`;
   }
 
+  function ensureInternalForecast(draws) {
+    if (internalAutoBusy) return null;
+    const latest = draws.at(-1);
+    if (!latest || draws.length < 500) return null;
+
+    let archive = loadArchive();
+    settleArchive(archive, draws);
+    archive = loadArchive();
+
+    const existing = currentForecast(archive, latest.draw, 'internal');
+    if (existing) return existing;
+
+    internalAutoBusy = true;
+    try {
+      const model = runInternalModel(draws);
+      const rec = {
+        id: `internal-${latest.draw}-${Date.now()}`,
+        provider: 'internal',
+        auto: true,
+        version: VERSION,
+        createdAt: new Date().toISOString(),
+        baseDraw: latest.draw,
+        targetDraw: model.target.draw,
+        targetTime: model.target.time,
+        targetDate: model.target.date,
+        officialSchedule: CURRENT_SCHEDULE,
+        scheduleSource: 'current official KENO 4M schedule',
+        picks: model.picks,
+        reasons: model.reasons,
+        confidence: model.confidence,
+        summary: model.summary,
+        packages: model.packages,
+        backtest: model.backtest,
+        settled: false,
+        actualDraw: null,
+        actualColumn: null,
+        actualTime: '',
+        actualDate: '',
+        result: null
+      };
+      archive.push(rec);
+      saveArchive(archive);
+      return rec;
+    } finally {
+      internalAutoBusy = false;
+    }
+  }
+
   async function refreshUi() {
     injectUi();
     let draws;
+    let fresh = false;
     try {
       draws = await fetchFullHistory();
-      $('aiStatus').textContent = 'АРХИВ СВЕЖИЙ';
+      fresh = true;
+      $('aiStatus').textContent = 'ВНУТРЕННИЙ · АВТО';
     } catch (_) {
       draws = loadDraws();
       $('aiStatus').textContent = 'ЛОКАЛЬНЫЙ РЕЗЕРВ';
     }
 
-    const archive = loadArchive();
+    let archive = loadArchive();
     settleArchive(archive, draws);
 
+    // Внутренний алгоритм работает постоянно: на каждом новом официальном
+    // тираже автоматически фиксирует прогноз на следующий. При ошибке сети
+    // новый прогноз не создаём по старому локальному кэшу.
+    if (fresh) ensureInternalForecast(draws);
+
+    archive = loadArchive();
     const latest = draws.at(-1);
     const currents = latest ? archive.filter(r => r.baseDraw === latest.draw && !r.settled) : [];
-    const current = currents.sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')))[0] || null;
+    // На экране по умолчанию показываем внутренний автопрогноз. Если пользователь
+    // только что запускал OpenAI, runExternalAnalysis сам покажет внешний результат.
+    const current = currents.find(r => (r.provider || 'openai') === 'internal')
+      || currents.sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')))[0]
+      || null;
     renderForecast(current);
-    renderArchive(loadArchive());
+    renderArchive(archive);
 
     if (latest) {
       const target = inferNextTarget(draws);
-      $('aiNextHint').textContent = current
-        ? `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Есть сохранённый прогноз.`
-        : `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Следующий прогноз: №${target.draw}${target.time !== '—' ? ` · ориентировочно ${target.time}` : ''}`;
+      const hasInternal = !!currentForecast(archive, latest.draw, 'internal');
+      const hasExternal = !!currentForecast(archive, latest.draw, 'openai');
+      $('aiNextHint').textContent = `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Внутренний: ${hasInternal ? 'записан автоматически' : 'ожидает свежий архив'} · OpenAI: ${hasExternal ? 'подключён' : 'не запускался'}. Следующий №${target.draw}${target.time !== '—' ? ` · ${target.time}` : ''}.`;
     }
   }
 
@@ -824,8 +884,8 @@
       .muted{color:#8194aa}
       .ai-error{color:#ff9b9b}
 
-      .ai-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-      .ai-run.internal{background:linear-gradient(135deg,#6b4f16,#4b3510);border-color:#d8a82f}
+      .ai-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:stretch}
+      .ai-auto-badge{display:flex;align-items:center;justify-content:center;border:1px solid #d8a82f;border-radius:12px;background:linear-gradient(135deg,#6b4f16,#4b3510);color:#ffe18a;font-size:12px;font-weight:1000;padding:10px 8px;text-align:center}
       .ai-provider-block{border:1px solid #294862;border-radius:12px;padding:10px;margin-top:9px;background:#0b1b29}
       .ai-provider-block:first-child{margin-top:0}
       .ai-provider-block.provider-hit{border-color:#3b9b68;box-shadow:inset 0 0 20px rgba(50,200,120,.06)}
@@ -870,7 +930,7 @@
           </div>
 
           <div id="aiTarget" class="ai-target">ПРОГНОЗ НЕ СОЗДАН</div>
-          <div class="ai-actions"><button id="aiInternalBtn" class="ai-run internal" type="button">ВНУТРЕННИЙ</button><button id="aiRunBtn" class="ai-run" type="button">ВНЕШНИЙ OpenAI</button></div>
+          <div class="ai-actions"><div class="ai-auto-badge">● ВНУТРЕННИЙ · АВТО</div><button id="aiRunBtn" class="ai-run" type="button">ВНЕШНИЙ OpenAI</button></div>
           <div id="aiNextHint" class="ai-next"></div>
 
           <div id="aiPicks" class="ai-picks"></div>
@@ -907,40 +967,7 @@
       });
     });
 
-    $('aiInternalBtn')?.addEventListener('click', runInternalAnalysis);
     $('aiRunBtn')?.addEventListener('click', runExternalAnalysis);
-  }
-
-  async function runInternalAnalysis() {
-    const btn=$('aiInternalBtn');
-    btn.disabled=true;
-    $('aiStatus').textContent='ВНУТРЕННИЙ · ОБУЧЕНИЕ';
-    $('aiSummary').textContent='Пересчитываю 10 независимых пакетов по свежему архиву...';
-    try {
-      const draws=await fetchFullHistory();
-      const latest=draws.at(-1);
-      if(!latest||draws.length<500) throw new Error('Недостаточно истории для внутреннего обучения');
-      let archive=loadArchive();
-      settleArchive(archive,draws); archive=loadArchive();
-      const existing=currentForecast(archive,latest.draw,'internal');
-      if(existing){ renderForecast(existing); renderArchive(archive); $('aiStatus').textContent='ВНУТРЕННИЙ · СОХРАНЕНО'; return; }
-      const model=runInternalModel(draws);
-      const rec={
-        id:`internal-${latest.draw}-${Date.now()}`, provider:'internal', version:VERSION,
-        createdAt:new Date().toISOString(), baseDraw:latest.draw,
-        targetDraw:model.target.draw,targetTime:model.target.time,targetDate:model.target.date,
-        officialSchedule:CURRENT_SCHEDULE,scheduleSource:'current official KENO 4M schedule',
-        picks:model.picks,reasons:model.reasons,confidence:model.confidence,summary:model.summary,
-        packages:model.packages,backtest:model.backtest,settled:false,actualDraw:null,actualColumn:null,actualTime:'',actualDate:'',result:null
-      };
-      archive.push(rec); saveArchive(archive);
-      renderForecast(rec); renderArchive(loadArchive());
-      $('aiStatus').textContent='ВНУТРЕННИЙ · СОХРАНЕНО';
-      $('aiNextHint').textContent='Внутренний прогноз зафиксирован. Он пересчитается только для следующего нового тиража.';
-    } catch(error) {
-      $('aiStatus').innerHTML='<span class="ai-error">ОШИБКА</span>';
-      $('aiSummary').innerHTML=`<span class="ai-error">${escapeHtml(error?.message||error)}</span>`;
-    } finally { btn.disabled=false; }
   }
 
   async function runExternalAnalysis() {
@@ -1015,6 +1042,7 @@
         confidence: parsed.confidence,
         summary: parsed.summary,
         rawAnalysis: parsed.raw,
+        usedInternalLearning: true,
         settled: false,
         actualDraw: null,
         actualColumn: null,
