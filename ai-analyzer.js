@@ -5,7 +5,7 @@
   const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'OPENAI-EXTERNAL-3.0-FULL-ARCHIVE';
+  const VERSION = 'OPENAI-EXTERNAL-4.0-FULL-ARCHIVE';
 
   const $ = id => document.getElementById(id);
 
@@ -342,6 +342,7 @@
       rec.actualDraw = actualDraw.draw;
       rec.actualColumn = actualDraw.column;
       rec.actualTime = actualDraw.time || '';
+      rec.actualDate = actualDraw.date || '';
       const pos = rec.picks.indexOf(actualDraw.column);
       rec.result = pos === 0 ? 'TOP1' : (pos > 0 ? 'TOP3' : 'MISS');
       changed = true;
@@ -395,31 +396,74 @@
     $('aiMeta').textContent = `Создан после тиража №${rec.baseDraw} · ${new Date(rec.createdAt).toLocaleString('ru-RU')}`;
   }
 
+  function shortDate(value) {
+    const raw = String(value || '').trim();
+    let m = raw.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{4})$/);
+    if (m) return `${m[1]}.${m[2]}.${m[3].slice(-2)}`;
+    m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[3]}.${m[2]}.${m[1].slice(-2)}`;
+    return raw || '—';
+  }
+
+  function archiveResultIcon(rec) {
+    if (!rec.settled) return '<span title="ждём результат">—</span>';
+    return rec.result === 'TOP1' || rec.result === 'TOP3'
+      ? '<span title="попадание в TOP-3">🔥</span>'
+      : '<span title="мимо">—</span>';
+  }
+
   function renderArchive(archive) {
     const host = $('aiArchive');
     if (!host) return;
-    const recent = archive.slice(-20).reverse();
+    const recent = archive.slice(-30).reverse();
 
     if (!recent.length) {
       host.innerHTML = '<div class="ai-empty">Архив пока пуст.</div>';
       return;
     }
 
-    host.innerHTML = recent.map(rec => {
-      const fact = rec.settled
-        ? `<div class="ai-fact">ФАКТ: <strong>СТ${rec.actualColumn}</strong> · тираж №${rec.actualDraw}${rec.actualTime ? ` · ${escapeHtml(rec.actualTime)}` : ''}</div>`
-        : '<div class="ai-fact muted">Факт появится после следующего тиража.</div>';
-      return `
-        <div class="ai-archive-row">
-          <div class="ai-archive-head">
-            <b>№${rec.targetDraw}${rec.targetTime && rec.targetTime !== '—' ? ` · ${escapeHtml(rec.targetTime)}` : ''}</b>
-            ${resultBadge(rec)}
-          </div>
-          <div class="ai-mini-picks">${rec.picks.map((x, i) => `<span class="mini-${i + 1}">СТ${x}</span>`).join('')}</div>
-          ${fact}
+    host.innerHTML = `
+      <div class="ai-history">
+        <div class="ai-history-labels">
+          <span>ТИРАЖ</span><span>ДАТА</span><span>ВРЕМЯ</span><span>ИТОГ</span><span></span>
         </div>
-      `;
-    }).join('');
+        ${recent.map(rec => {
+          const hit = rec.settled && (rec.result === 'TOP1' || rec.result === 'TOP3');
+          const fact = rec.settled
+            ? `<div class="ai-history-fact">
+                 ВЫШЕЛ: <strong>СТ${rec.actualColumn}</strong>
+                 ${hit ? '<span class="ok">✅</span>' : '<span class="miss">❌ МИМО</span>'}
+                 ${rec.actualTime ? `<span class="muted"> · ${escapeHtml(rec.actualTime)}</span>` : ''}
+               </div>`
+            : '<div class="ai-history-fact muted">Результат ещё не появился.</div>';
+
+          return `
+            <details class="ai-history-row">
+              <summary class="ai-history-summary">
+                <span class="ai-hdraw">№${rec.targetDraw}</span>
+                <span class="ai-hdate">${escapeHtml(shortDate(rec.targetDate || rec.actualDate))}</span>
+                <span class="ai-htime">${escapeHtml(rec.targetTime && rec.targetTime !== '—' ? rec.targetTime : '—')}</span>
+                <span class="ai-hresult">${archiveResultIcon(rec)}</span>
+                <span class="ai-harrow">▼</span>
+              </summary>
+              <div class="ai-history-body">
+                <div class="ai-history-caption">ПРОГНОЗ ИИ · TOP-3</div>
+                <div class="ai-history-picks">
+                  ${rec.picks.map((x, i) => `
+                    <div class="ai-history-pick hp${i + 1}">
+                      <small>TOP-${i + 1}</small>
+                      <b>СТ${x}</b>
+                    </div>
+                  `).join('')}
+                </div>
+                ${fact}
+                ${rec.summary ? `<div class="ai-history-note">${escapeHtml(rec.summary)}</div>` : ''}
+              </div>
+            </details>
+          `;
+        }).join('')}
+      </div>
+    `;
   }
 
   async function refreshUi() {
@@ -477,20 +521,35 @@
       .ai-confidence{border:1px solid #415d78;border-radius:999px;padding:4px 7px;color:#ffd34f;font-weight:950}
       .ai-summary{font-size:13px;line-height:1.5;color:#eef5ff}
       .ai-meta{margin-top:7px;color:#8194aa;font-size:10px}
-      .ai-archive-title{margin-top:14px;font-size:16px;font-weight:1000}
-      .ai-archive-row{margin-top:8px;border:1px solid #2d4665;background:#101f33;border-radius:12px;padding:9px}
-      .ai-archive-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-      .ai-badge{font-size:10px;font-weight:1000;border-radius:999px;padding:4px 7px;border:1px solid}
-      .ai-hit{color:#6ee7a0;border-color:#2f8253;background:#123522}
-      .ai-miss{color:#ffaaaa;border-color:#854343;background:#351919}
-      .ai-wait{color:#ffd34f;border-color:#7b6628;background:#342b11}
-      .ai-mini-picks{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
-      .ai-mini-picks span{font-weight:1000;border-radius:8px;padding:5px 8px;border:1px solid #415c77}
-      .ai-mini-picks .mini-1{color:#ffe06b;border-color:#9b7c1d}
-      .ai-mini-picks .mini-2{color:#75e5f7;border-color:#27849a}
-      .ai-mini-picks .mini-3{color:#8df0b3;border-color:#35885a}
-      .ai-fact{margin-top:7px;font-size:12px;color:#dbe7f3}
-      .ai-fact strong{font-size:15px;color:#fff}
+      .ai-archive-title{margin-top:16px;font-size:21px;font-weight:1000}
+      .ai-history{margin-top:10px;border:1px solid #294862;border-radius:16px;overflow:hidden;background:#0b1726}
+      .ai-history-labels{display:grid;grid-template-columns:1.45fr .95fr .78fr .78fr 28px;gap:6px;padding:10px 12px 8px;color:#8da1b8;font-size:9px;font-weight:1000;letter-spacing:.08em;background:#10253a}
+      .ai-history-labels span:nth-child(4){text-align:center}
+      .ai-history-row{border-top:1px solid #24435b}
+      .ai-history-row:first-of-type{border-top:0}
+      .ai-history-row summary{list-style:none;cursor:pointer}
+      .ai-history-row summary::-webkit-details-marker{display:none}
+      .ai-history-summary{display:grid;grid-template-columns:1.45fr .95fr .78fr .78fr 28px;gap:6px;align-items:center;padding:13px 12px;background:#0b1d2c}
+      .ai-history-row[open] .ai-history-summary{background:#102a3e}
+      .ai-hdraw{color:#52d2ff;font-size:14px;font-weight:1000}
+      .ai-hdate,.ai-htime{color:#eef5ff;font-size:13px;font-weight:950}
+      .ai-hresult{text-align:center;font-size:23px;line-height:1}
+      .ai-harrow{color:#8ca1b7;font-size:14px;text-align:right;transition:transform .18s ease}
+      .ai-history-row[open] .ai-harrow{transform:rotate(180deg)}
+      .ai-history-body{padding:11px 12px 13px;background:#091722;border-top:1px solid #28445c}
+      .ai-history-caption{font-size:10px;color:#8da1b8;font-weight:1000;letter-spacing:.06em;margin-bottom:7px}
+      .ai-history-picks{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+      .ai-history-pick{border:1px solid #355673;border-radius:10px;padding:8px;text-align:center;background:#0d2132}
+      .ai-history-pick.hp1{border-color:#a78b2c;background:#2c260f}
+      .ai-history-pick.hp2{border-color:#267d91;background:#102c38}
+      .ai-history-pick.hp3{border-color:#377d56;background:#102a1e}
+      .ai-history-pick b{display:block;font-size:18px;color:#fff}
+      .ai-history-pick small{font-size:9px;color:#aebfd2;font-weight:900}
+      .ai-history-fact{margin-top:9px;padding:10px;border:1px solid #31516c;border-radius:10px;background:#102336;font-size:13px;color:#dce8f4}
+      .ai-history-fact strong{font-size:18px;color:#fff}
+      .ai-history-fact .ok{color:#62e6a0;font-size:18px;font-weight:1000;margin-left:6px}
+      .ai-history-fact .miss{color:#ff9b9b;font-size:13px;font-weight:950;margin-left:6px}
+      .ai-history-note{margin-top:8px;color:#a9bbcc;font-size:11px;line-height:1.4}
       .ai-empty{padding:12px;border:1px dashed #355273;border-radius:11px;color:#9babc0;text-align:center;font-size:12px}
       .muted{color:#8194aa}
       .ai-error{color:#ff9b9b}
@@ -544,8 +603,8 @@
             <div id="aiMeta" class="ai-meta"></div>
           </div>
 
-          <div class="ai-archive-title">🗂 АРХИВ ПРОГНОЗОВ</div>
-          <div class="ai-sub">Прогноз → следующий официальный тираж → факт</div>
+          <div class="ai-archive-title">🗂 ИСТОРИЯ ПРОГНОЗОВ</div>
+          <div class="ai-sub">Нажмите на тираж — увидите TOP-3 и реальный вышедший столб.</div>
           <div id="aiArchive"></div>
         </div>`;
       host.insertBefore(section, $('settingsPanel') || null);
