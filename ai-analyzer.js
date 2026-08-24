@@ -5,7 +5,7 @@
   const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'OPENAI-EXTERNAL-5.0-OFFICIAL-SCHEDULE';
+  const VERSION = 'HYBRID-6.0-INTERNAL-LEARNER';
   const MATRIX_REFRESH_MS = 60000;
 
   const $ = id => document.getElementById(id);
@@ -317,11 +317,13 @@
       stats250: columnStats(draws, 250),
       stats100: columnStats(draws, 100),
       patternsAll: patternSummary(draws),
+      internalLearner: internalSnapshotForOpenAI(draws),
       request: [
         'Перед тобой полный доступный официальный архив столбцов, а не локальный кэш телефона.',
         'Проведи сравнение всей истории с последними 500/250/100 и особенно последними 80 тиражами.',
         'Обязательно учитывай: переходы столбец→столбец, повторы, возвраты через 1/2/3 тиража, серии, продолжение шага и обратный шаг, малые и большие зеркала, текущие и типичные разрывы, чет/нечет, изменения частот по окнам, а также группы/числа последних тиражей.',
         'Не выбирай столбцы только по простой частоте. Сопоставь несколько независимых сигналов и объясни, какие сигналы сошлись.',
+        'В payload есть internalLearner — независимый внутренний пакетный алгоритм. Используй его как дополнительную информацию, но НЕ копируй автоматически: внешний прогноз должен оставаться самостоятельным.',
         'КЕНО случайно: не обещай гарантии и не изображай обучение на будущих результатах.',
         'Ответ дай СТРОГО без Markdown и без звездочек в формате:',
         'PICKS: 4,2,9',
@@ -427,8 +429,205 @@
     if (changed) saveArchive(archive);
   }
 
-  function currentForecast(archive, latestDraw) {
-    return archive.find(r => r.baseDraw === latestDraw && !r.settled) || null;
+  // ===== ВНУТРЕННИЙ АДАПТИВНЫЙ ДВИЖОК =====
+  // Никакое правило здесь не является обязательным. Каждый сигнал лишь
+  // добавляет/снимает вес, а итог строится из нескольких независимых слоёв.
+  function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+  function mean(a) { return a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; }
+
+  function targetTimeFromDraws(draws) {
+    const t = inferNextTarget(draws);
+    return t.time && t.time !== '—' ? t.time.slice(0,5) : '';
+  }
+
+  function frequencyMap(seq) {
+    const c = Array(11).fill(0);
+    seq.forEach(x => { if (x >= 1 && x <= 10) c[x]++; });
+    return c;
+  }
+
+  function conditionalLift(seq, anchor, candidate, lag = 1) {
+    let denom = 0, hit = 0;
+    const baseCount = seq.reduce((n,x)=>n+(x===candidate),0);
+    const base = baseCount / Math.max(1, seq.length);
+    for (let i = lag; i < seq.length; i++) {
+      if (seq[i-lag] === anchor) {
+        denom++;
+        if (seq[i] === candidate) hit++;
+      }
+    }
+    const p = (hit + 1.2) / (denom + 12); // мягкое сглаживание к ~10%
+    const lift = base > 0 ? p / base : 1;
+    const reliability = clamp(denom / 45, 0, 1);
+    return { p, lift, denom, hit, reliability };
+  }
+
+  function gapProfile(seq, col) {
+    const pos=[];
+    seq.forEach((x,i)=>{ if(x===col) pos.push(i); });
+    const gaps=[];
+    for(let i=1;i<pos.length;i++) gaps.push(pos[i]-pos[i-1]);
+    const current = pos.length ? seq.length-1-pos.at(-1) : seq.length;
+    if (!gaps.length) return {current, median:null, q75:null, hazard:.1, sample:0};
+    const sorted=[...gaps].sort((a,b)=>a-b);
+    const med=sorted[Math.floor(sorted.length*.5)];
+    const q75=sorted[Math.floor(sorted.length*.75)];
+    const need=current+1;
+    const atRisk=gaps.filter(g=>g>=need).length;
+    const exact=gaps.filter(g=>g===need).length;
+    const hazard=(exact+1)/(atRisk+10); // сглаженная вероятность закрытия разрыва сейчас
+    return {current, median:med, q75, hazard, sample:gaps.length};
+  }
+
+  function packageState(seq, col, profile, friendshipSignal) {
+    const last=[];
+    for(let lag=1;lag<=7;lag++) if(seq.at(-lag)===col) last.push(lag);
+    const recentHits=last.length;
+    const veryRecent=last.some(x=>x<=3);
+    const overdue=profile.q75 && profile.current >= profile.q75;
+    if (veryRecent && friendshipSignal > .08) return 'АКТИВЕН';
+    if (recentHits >= 2) return 'АКТИВЕН';
+    if (overdue || friendshipSignal > .16) return 'РАЗВОРАЧИВАЕТСЯ';
+    if (profile.current <= 2 && friendshipSignal < -.08) return 'ЗАТУХАЕТ';
+    return 'СВЁРНУТ';
+  }
+
+  function buildInternalSnapshot(draws, opts = {}) {
+    const maxWindow = Math.min(opts.maxWindow || 1400, draws.length);
+    const work = draws.slice(-maxWindow);
+    const seq = work.map(d=>d.column);
+    const latestSeq = draws.map(d=>d.column);
+    const targetTime = opts.targetTime || targetTimeFromDraws(draws);
+    const windows=[80,200,500,Math.min(1200,seq.length)];
+    const freqByWindow=windows.map(w=>frequencyMap(seq.slice(-Math.min(w,seq.length))));
+    const baseAll=frequencyMap(seq);
+    const latestCols=[];
+    for(let lag=1;lag<=5;lag++) latestCols.push(latestSeq.at(-lag));
+
+    const rows=[];
+    for(let col=1; col<=10; col++) {
+      const reasons=[];
+      let score=50;
+
+      // 1) Дружба/переходы с задержками 1..5. Ни один переход не обязателен.
+      let friend=0, friendWeight=0;
+      for(let lag=1;lag<=5;lag++) {
+        const anchor=latestCols[lag-1];
+        if(!anchor) continue;
+        const st=conditionalLift(seq,anchor,col,lag);
+        const raw=clamp((st.lift-1),-.65,.9) * st.reliability;
+        const lagWeight=[1,.72,.55,.42,.34][lag-1];
+        friend += raw*lagWeight;
+        friendWeight += lagWeight;
+        if(lag<=3 && raw>.18) reasons.push(`дружба ${anchor}→${col} через ${lag}: +${Math.round(raw*100)}%`);
+      }
+      const friendNorm=friend/Math.max(.01,friendWeight);
+      score += clamp(friendNorm*24,-12,16);
+
+      // 2) Собственные повторы/возвраты 1..5 — тоже вероятностный слой.
+      let selfSignal=0;
+      for(let lag=1;lag<=5;lag++) {
+        if(latestSeq.at(-lag)!==col) continue;
+        const st=conditionalLift(seq,col,col,lag);
+        const bump=clamp((st.lift-1)*st.reliability,-.5,.9) * [1,.8,.65,.52,.42][lag-1];
+        selfSignal += bump;
+        if(bump>.12) reasons.push(lag===1 ? 'поддержка повтора' : `поддержка возврата через ${lag-1}`);
+      }
+      score += clamp(selfSignal*15,-7,13);
+
+      // 3) Индивидуальный цикл/разрыв столба.
+      const gp=gapProfile(seq,col);
+      const hazardLift=(gp.hazard/.10)-1;
+      score += clamp(hazardLift*5,-6,10);
+      if(hazardLift>.35) reasons.push(`разрыв ${gp.current}: повышенная фаза возврата`);
+
+      // 4) Устойчивость частоты сразу в нескольких окнах, без доминирования частоты.
+      const lifts=freqByWindow.map((fm,i)=>{
+        const w=Math.min(windows[i],seq.length);
+        const p=fm[col]/Math.max(1,w);
+        const b=baseAll[col]/Math.max(1,seq.length);
+        return b ? p/b : 1;
+      });
+      const recentLift=mean(lifts.slice(0,3));
+      const consistent=lifts.filter(x=>x>1.05).length;
+      score += clamp((recentLift-1)*8,-4,6) + (consistent>=3 ? 2 : 0);
+      if(consistent>=3) reasons.push('поддержка нескольких окон 80/200/500');
+
+      // 5) Время тиража: только слабая добавка при достаточной выборке.
+      if(targetTime) {
+        const sameTime=work.filter(d=>String(d.time||'').slice(0,5)===targetTime);
+        if(sameTime.length>=18) {
+          const hits=sameTime.filter(d=>d.column===col).length;
+          const p=(hits+1)/(sameTime.length+10);
+          const base=baseAll[col]/Math.max(1,seq.length);
+          const lift=base?p/base:1;
+          score += clamp((lift-1)*4,-3,4);
+          if(lift>1.25) reasons.push(`время ${targetTime} исторически поддерживает`);
+        }
+      }
+
+      const state=packageState(latestSeq,col,gp,friendNorm+selfSignal);
+      if(state==='АКТИВЕН') score+=4;
+      else if(state==='РАЗВОРАЧИВАЕТСЯ') score+=2.5;
+      else if(state==='ЗАТУХАЕТ') score-=2;
+
+      rows.push({col, score:clamp(score,0,100), state, gap:gp.current, reasons:reasons.slice(0,4), friend:friendNorm, self:selfSignal});
+    }
+
+    rows.sort((a,b)=>b.score-a.score || a.col-b.col);
+    return rows;
+  }
+
+  function backtestInternal(draws, count = 120) {
+    const start=Math.max(500,draws.length-count);
+    let tests=0,hits=0,top1=0;
+    for(let i=start;i<draws.length;i++) {
+      const hist=draws.slice(0,i);
+      const targetTime=String(draws[i]?.time||'').slice(0,5);
+      const rows=buildInternalSnapshot(hist,{maxWindow:1200,targetTime});
+      const picks=rows.slice(0,3).map(x=>x.col);
+      tests++;
+      if(picks.includes(draws[i].column)) hits++;
+      if(picks[0]===draws[i].column) top1++;
+    }
+    return {tests,hits,top1,hitRate:tests?hits/tests:0,top1Rate:tests?top1/tests:0};
+  }
+
+  function runInternalModel(draws) {
+    const target=inferNextTarget(draws);
+    const rows=buildInternalSnapshot(draws,{targetTime:target.time});
+    const picks=rows.slice(0,3).map(x=>x.col);
+    const reasons={};
+    rows.slice(0,3).forEach(r=>{
+      reasons[r.col]=`${r.state} · ${r.reasons.length?r.reasons.join('; '):`сводный балл ${r.score.toFixed(1)}`}`;
+    });
+    const bt=backtestInternal(draws,120);
+    const confidence = bt.hitRate >= .36 ? 'повышенный' : (bt.hitRate >= .30 ? 'средний' : 'низкий');
+    const packageSummary=rows.slice(0,5).map(r=>`СТ${r.col} ${r.state.toLowerCase()} ${r.score.toFixed(0)}`).join(' · ');
+    return {
+      target, picks, reasons, confidence,
+      summary:`Пакеты: ${packageSummary}. Проверка без подглядывания: TOP-3 ${Math.round(bt.hitRate*100)}% на ${bt.tests} последних шагах (случайный ориентир 30%).`,
+      packages:rows,
+      backtest:bt
+    };
+  }
+
+  function internalSnapshotForOpenAI(draws) {
+    const model=runInternalModel(draws);
+    return {
+      top3:model.picks,
+      backtest:model.backtest,
+      packages:model.packages.map(r=>({column:r.col,state:r.state,score:Number(r.score.toFixed(1)),gap:r.gap,reasons:r.reasons})),
+      instruction:'Это независимый внутренний адаптивный анализ. Не копируй его механически: дай собственный прогноз и используй совпадения/расхождения только как дополнительный аргумент.'
+    };
+  }
+
+  function currentForecast(archive, latestDraw, provider = null) {
+    return archive.find(r => r.baseDraw === latestDraw && !r.settled && (!provider || (r.provider || 'openai') === provider)) || null;
+  }
+
+  function providerName(rec) {
+    return (rec?.provider || 'openai') === 'internal' ? 'ВНУТРЕННИЙ' : 'OPENAI';
   }
 
   function escapeHtml(value) {
@@ -454,8 +653,8 @@
     $('aiTarget').textContent = target;
 
     if (!rec) {
-      $('aiPicks').innerHTML = '<div class="ai-empty">Нажмите «Сделать прогноз».</div>';
-      $('aiSummary').textContent = 'ИИ проанализирует текущую историю и сохранит прогноз до появления следующего тиража.';
+      $('aiPicks').innerHTML = '<div class="ai-empty">Выберите «Внутренний» или «Внешний OpenAI».</div>';
+      $('aiSummary').textContent = 'Два независимых алгоритма могут дать прогноз на один и тот же тираж.';
       $('aiConfidence').textContent = '—';
       return;
     }
@@ -468,9 +667,9 @@
       </div>
     `).join('');
 
-    $('aiConfidence').textContent = String(rec.confidence || 'низкий').toUpperCase();
+    $('aiConfidence').textContent = `${providerName(rec)} · ${String(rec.confidence || 'низкий').toUpperCase()}`;
     $('aiSummary').textContent = rec.summary || 'Прогноз сохранён.';
-    $('aiMeta').textContent = `Создан после тиража №${rec.baseDraw} · ${new Date(rec.createdAt).toLocaleString('ru-RU')}`;
+    $('aiMeta').textContent = `${providerName(rec)} · создан после тиража №${rec.baseDraw} · ${new Date(rec.createdAt).toLocaleString('ru-RU')}`;
   }
 
   function shortDate(value) {
@@ -490,57 +689,50 @@
   }
 
   function renderArchive(archive) {
-    const host = $('aiArchive');
-    if (!host) return;
-    const recent = archive.slice(-30).reverse();
+    const host=$('aiArchive');
+    if(!host) return;
+    const groups=new Map();
+    archive.forEach(rec=>{
+      const key=String(rec.targetDraw);
+      if(!groups.has(key)) groups.set(key,[]);
+      groups.get(key).push(rec);
+    });
+    const recent=[...groups.values()].sort((a,b)=>(b[0]?.targetDraw||0)-(a[0]?.targetDraw||0)).slice(0,30);
+    if(!recent.length){ host.innerHTML='<div class="ai-empty">Архив пока пуст.</div>'; return; }
 
-    if (!recent.length) {
-      host.innerHTML = '<div class="ai-empty">Архив пока пуст.</div>';
-      return;
-    }
-
-    host.innerHTML = `
-      <div class="ai-history">
-        <div class="ai-history-labels">
-          <span>ТИРАЖ</span><span>ДАТА</span><span>ВРЕМЯ</span><span>ИТОГ</span><span></span>
-        </div>
-        ${recent.map(rec => {
-          const hit = rec.settled && (rec.result === 'TOP1' || rec.result === 'TOP3');
-          const fact = rec.settled
-            ? `<div class="ai-history-fact">
-                 ВЫШЕЛ: <strong>СТ${rec.actualColumn}</strong>
-                 ${hit ? '<span class="ok">✅</span>' : '<span class="miss">❌ МИМО</span>'}
-                 ${rec.actualTime ? `<span class="muted"> · ${escapeHtml(rec.actualTime)}</span>` : ''}
-               </div>`
-            : '<div class="ai-history-fact muted">Результат ещё не появился.</div>';
-
-          return `
-            <details class="ai-history-row">
-              <summary class="ai-history-summary">
-                <span class="ai-hdraw">№${rec.targetDraw}</span>
-                <span class="ai-hdate">${escapeHtml(shortDate(rec.settled ? (rec.actualDate || rec.targetDate) : rec.targetDate))}</span>
-                <span class="ai-htime">${escapeHtml(rec.settled && rec.actualTime ? rec.actualTime.slice(0,5) : (rec.targetTime && rec.targetTime !== '—' ? rec.targetTime : '—'))}</span>
-                <span class="ai-hresult">${archiveResultIcon(rec)}</span>
-                <span class="ai-harrow">▼</span>
-              </summary>
-              <div class="ai-history-body">
-                <div class="ai-history-caption">ПРОГНОЗ ИИ · TOP-3</div>
-                <div class="ai-history-picks">
-                  ${rec.picks.map((x, i) => `
-                    <div class="ai-history-pick hp${i + 1}">
-                      <small>TOP-${i + 1}</small>
-                      <b>СТ${x}</b>
-                    </div>
-                  `).join('')}
-                </div>
-                ${fact}
-                ${rec.summary ? `<div class="ai-history-note">${escapeHtml(rec.summary)}</div>` : ''}
-              </div>
-            </details>
-          `;
-        }).join('')}
-      </div>
-    `;
+    host.innerHTML=`<div class="ai-history">
+      <div class="ai-history-labels"><span>ТИРАЖ</span><span>ДАТА</span><span>ВРЕМЯ</span><span>ИТОГ</span><span></span></div>
+      ${recent.map(records=>{
+        records.sort((a,b)=>String(a.provider||'openai').localeCompare(String(b.provider||'openai')));
+        const ref=records[0];
+        const actual=records.find(r=>r.settled)?.actualColumn;
+        const actualTime=records.find(r=>r.settled)?.actualTime||'';
+        const actualDate=records.find(r=>r.settled)?.actualDate||ref.targetDate;
+        const anyHit=records.some(r=>r.settled && (r.result==='TOP1'||r.result==='TOP3'));
+        const allSettled=records.every(r=>r.settled);
+        const icon=anyHit?'🔥':(allSettled?'—':'—');
+        return `<details class="ai-history-row">
+          <summary class="ai-history-summary">
+            <span class="ai-hdraw">№${ref.targetDraw}</span>
+            <span class="ai-hdate">${escapeHtml(shortDate(actualDate))}</span>
+            <span class="ai-htime">${escapeHtml(actualTime?actualTime.slice(0,5):(ref.targetTime||'—'))}</span>
+            <span class="ai-hresult">${icon}</span><span class="ai-harrow">▼</span>
+          </summary>
+          <div class="ai-history-body">
+            ${records.map(rec=>{
+              const hit=rec.settled&&(rec.result==='TOP1'||rec.result==='TOP3');
+              const label=providerName(rec);
+              return `<div class="ai-provider-block ${hit?'provider-hit':''}">
+                <div class="ai-provider-title"><b>${label}</b><span>${hit?'🔥 ПОПАЛ':(rec.settled?'МИМО':'ЖДЁМ')}</span></div>
+                <div class="ai-history-picks">${rec.picks.map((x,i)=>`<div class="ai-history-pick hp${i+1} ${hit&&x===rec.actualColumn?'actual-hit':''}"><small>TOP-${i+1}</small><b>СТ${x}</b></div>`).join('')}</div>
+                ${rec.settled?`<div class="ai-history-fact">ВЫШЕЛ: <strong class="${hit?'actual-green':''}">СТ${rec.actualColumn}</strong> ${hit?'<span class="ok">✅🔥</span>':'<span class="miss">❌ МИМО</span>'}</div>`:'<div class="ai-history-fact muted">Результат ещё не появился.</div>'}
+                ${rec.summary?`<div class="ai-history-note">${escapeHtml(rec.summary)}</div>`:''}
+              </div>`;
+            }).join('')}
+          </div>
+        </details>`;
+      }).join('')}
+    </div>`;
   }
 
   async function refreshUi() {
@@ -558,14 +750,15 @@
     settleArchive(archive, draws);
 
     const latest = draws.at(-1);
-    const current = latest ? currentForecast(archive, latest.draw) : null;
+    const currents = latest ? archive.filter(r => r.baseDraw === latest.draw && !r.settled) : [];
+    const current = currents.sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')))[0] || null;
     renderForecast(current);
     renderArchive(loadArchive());
 
     if (latest) {
       const target = inferNextTarget(draws);
       $('aiNextHint').textContent = current
-        ? `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Прогноз зафиксирован.`
+        ? `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Есть сохранённый прогноз.`
         : `База: ${draws.length} официальных тиражей · последний №${latest.draw}. Следующий прогноз: №${target.draw}${target.time !== '—' ? ` · ориентировочно ${target.time}` : ''}`;
     }
   }
@@ -630,6 +823,17 @@
       .ai-empty{padding:12px;border:1px dashed #355273;border-radius:11px;color:#9babc0;text-align:center;font-size:12px}
       .muted{color:#8194aa}
       .ai-error{color:#ff9b9b}
+
+      .ai-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+      .ai-run.internal{background:linear-gradient(135deg,#6b4f16,#4b3510);border-color:#d8a82f}
+      .ai-provider-block{border:1px solid #294862;border-radius:12px;padding:10px;margin-top:9px;background:#0b1b29}
+      .ai-provider-block:first-child{margin-top:0}
+      .ai-provider-block.provider-hit{border-color:#3b9b68;box-shadow:inset 0 0 20px rgba(50,200,120,.06)}
+      .ai-provider-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11px;color:#a9bbcc}
+      .ai-provider-title b{color:#fff;font-size:13px}
+      .actual-hit{border-color:#44d98a!important;background:#123b29!important;box-shadow:0 0 0 1px rgba(68,217,138,.2)}
+      .actual-green{color:#62e6a0!important}
+
       @media(max-width:520px){
         .viewtabs{grid-template-columns:repeat(3,1fr)!important}
         .viewtab{font-size:12px;padding:8px 4px}
@@ -659,14 +863,14 @@
         <div class="card ai-card">
           <div class="ai-head">
             <div>
-              <b>🧠 Внешний ИИ-прогноз</b>
-              <div class="ai-sub">OpenAI через защищённый Cloudflare Worker · прогноз сохраняется до следующего тиража</div>
+              <b>🧠 Двойной прогноз</b>
+              <div class="ai-sub">Внутренний самоадаптивный пакетный алгоритм + независимый OpenAI</div>
             </div>
             <div id="aiStatus" class="ai-status">ГОТОВО</div>
           </div>
 
           <div id="aiTarget" class="ai-target">ПРОГНОЗ НЕ СОЗДАН</div>
-          <button id="aiRunBtn" class="ai-run" type="button">СДЕЛАТЬ ПРОГНОЗ</button>
+          <div class="ai-actions"><button id="aiInternalBtn" class="ai-run internal" type="button">ВНУТРЕННИЙ</button><button id="aiRunBtn" class="ai-run" type="button">ВНЕШНИЙ OpenAI</button></div>
           <div id="aiNextHint" class="ai-next"></div>
 
           <div id="aiPicks" class="ai-picks"></div>
@@ -681,7 +885,7 @@
           </div>
 
           <div class="ai-archive-title">🗂 ИСТОРИЯ ПРОГНОЗОВ</div>
-          <div class="ai-sub">Нажмите на тираж — увидите TOP-3 и реальный вышедший столб.</div>
+          <div class="ai-sub">Один архив: внутри видно прогноз каждого алгоритма и отдельное попадание 🔥.</div>
           <div id="aiArchive"></div>
         </div>`;
       host.insertBefore(section, $('settingsPanel') || null);
@@ -703,7 +907,40 @@
       });
     });
 
+    $('aiInternalBtn')?.addEventListener('click', runInternalAnalysis);
     $('aiRunBtn')?.addEventListener('click', runExternalAnalysis);
+  }
+
+  async function runInternalAnalysis() {
+    const btn=$('aiInternalBtn');
+    btn.disabled=true;
+    $('aiStatus').textContent='ВНУТРЕННИЙ · ОБУЧЕНИЕ';
+    $('aiSummary').textContent='Пересчитываю 10 независимых пакетов по свежему архиву...';
+    try {
+      const draws=await fetchFullHistory();
+      const latest=draws.at(-1);
+      if(!latest||draws.length<500) throw new Error('Недостаточно истории для внутреннего обучения');
+      let archive=loadArchive();
+      settleArchive(archive,draws); archive=loadArchive();
+      const existing=currentForecast(archive,latest.draw,'internal');
+      if(existing){ renderForecast(existing); renderArchive(archive); $('aiStatus').textContent='ВНУТРЕННИЙ · СОХРАНЕНО'; return; }
+      const model=runInternalModel(draws);
+      const rec={
+        id:`internal-${latest.draw}-${Date.now()}`, provider:'internal', version:VERSION,
+        createdAt:new Date().toISOString(), baseDraw:latest.draw,
+        targetDraw:model.target.draw,targetTime:model.target.time,targetDate:model.target.date,
+        officialSchedule:CURRENT_SCHEDULE,scheduleSource:'current official KENO 4M schedule',
+        picks:model.picks,reasons:model.reasons,confidence:model.confidence,summary:model.summary,
+        packages:model.packages,backtest:model.backtest,settled:false,actualDraw:null,actualColumn:null,actualTime:'',actualDate:'',result:null
+      };
+      archive.push(rec); saveArchive(archive);
+      renderForecast(rec); renderArchive(loadArchive());
+      $('aiStatus').textContent='ВНУТРЕННИЙ · СОХРАНЕНО';
+      $('aiNextHint').textContent='Внутренний прогноз зафиксирован. Он пересчитается только для следующего нового тиража.';
+    } catch(error) {
+      $('aiStatus').innerHTML='<span class="ai-error">ОШИБКА</span>';
+      $('aiSummary').innerHTML=`<span class="ai-error">${escapeHtml(error?.message||error)}</span>`;
+    } finally { btn.disabled=false; }
   }
 
   async function runExternalAnalysis() {
@@ -733,7 +970,7 @@
     settleArchive(archive, draws);
     archive = loadArchive();
 
-    const existing = currentForecast(archive, latest.draw);
+    const existing = currentForecast(archive, latest.draw, 'openai');
     if (existing) {
       renderForecast(existing);
       renderArchive(archive);
@@ -763,7 +1000,8 @@
       if (parsed.picks.length < 3) throw new Error('ИИ не вернул три распознаваемых столбца');
 
       const rec = {
-        id: `${latest.draw}-${Date.now()}`,
+        id: `openai-${latest.draw}-${Date.now()}`,
+        provider: 'openai',
         version: VERSION,
         createdAt: new Date().toISOString(),
         baseDraw: latest.draw,
