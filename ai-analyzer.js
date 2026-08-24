@@ -110,8 +110,11 @@
     if (!time) return null;
 
     let isoDate = date;
-    const dm = date.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{4})$/);
-    if (dm) isoDate = `${dm[3]}-${dm[2]}-${dm[1]}`;
+    const dm = date.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{2}|\d{4})$/);
+    if (dm) {
+      const year = dm[3].length === 2 ? `20${dm[3]}` : dm[3];
+      isoDate = `${year}-${dm[2]}-${dm[1]}`;
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
 
     const dt = new Date(`${isoDate}T${time.length === 5 ? time + ':00' : time}`);
@@ -345,18 +348,41 @@
   function settleArchive(archive, draws) {
     let changed = false;
     for (const rec of archive) {
-      if (rec.settled) continue;
       const actualDraw = draws.find(d => d.draw === rec.targetDraw) || draws.find(d => d.draw > rec.baseDraw);
-      if (!actualDraw) continue;
 
-      rec.settled = true;
-      rec.actualDraw = actualDraw.draw;
-      rec.actualColumn = actualDraw.column;
-      rec.actualTime = actualDraw.time || '';
-      rec.actualDate = actualDraw.date || '';
-      const pos = rec.picks.indexOf(actualDraw.column);
-      rec.result = pos === 0 ? 'TOP1' : (pos > 0 ? 'TOP3' : 'MISS');
-      changed = true;
+      // Старые записи архива могли быть созданы до сохранения даты/времени.
+      // Восстанавливаем их из официального архива при каждом обновлении.
+      if (actualDraw) {
+        if (rec.actualDraw !== actualDraw.draw) { rec.actualDraw = actualDraw.draw; changed = true; }
+        if (rec.actualColumn !== actualDraw.column) { rec.actualColumn = actualDraw.column; changed = true; }
+        if (rec.actualTime !== (actualDraw.time || '')) { rec.actualTime = actualDraw.time || ''; changed = true; }
+        if (rec.actualDate !== (actualDraw.date || '')) { rec.actualDate = actualDraw.date || ''; changed = true; }
+
+        const pos = Array.isArray(rec.picks) ? rec.picks.indexOf(actualDraw.column) : -1;
+        const result = pos === 0 ? 'TOP1' : (pos > 0 ? 'TOP3' : 'MISS');
+        if (!rec.settled) { rec.settled = true; changed = true; }
+        if (rec.result !== result) { rec.result = result; changed = true; }
+      }
+
+      // Если у старой записи не было целевой даты/времени, берём их из
+      // фактического тиража, а для ещё ожидаемого — вычисляем из базы.
+      if ((!rec.targetDate || rec.targetDate === '—') && actualDraw?.date) {
+        rec.targetDate = actualDraw.date;
+        changed = true;
+      }
+      if ((!rec.targetTime || rec.targetTime === '—') && actualDraw?.time) {
+        rec.targetTime = actualDraw.time;
+        changed = true;
+      }
+
+      if ((!rec.targetDate || !rec.targetTime || rec.targetTime === '—') && !actualDraw) {
+        const baseIndex = draws.findIndex(d => d.draw === rec.baseDraw);
+        if (baseIndex >= 0) {
+          const target = inferNextTarget(draws.slice(0, baseIndex + 1));
+          if ((!rec.targetDate || rec.targetDate === '—') && target.date) { rec.targetDate = target.date; changed = true; }
+          if ((!rec.targetTime || rec.targetTime === '—') && target.time && target.time !== '—') { rec.targetTime = target.time; changed = true; }
+        }
+      }
     }
     if (changed) saveArchive(archive);
   }
@@ -713,6 +739,7 @@
         actualDraw: null,
         actualColumn: null,
         actualTime: '',
+        actualDate: '',
         result: null
       };
 
