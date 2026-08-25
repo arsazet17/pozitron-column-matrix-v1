@@ -60,13 +60,15 @@ jobs:
             cp /tmp/keno-history.before-stoloto.json keno-history.json
           fi
 
-          # Недоступность Столото — не причина останавливать весь Action.
           exit 0
 
       - name: Внутренний ИИ · постоянный прогноз и архив
         run: node internal-forecast-runner.mjs
 
-      - name: Сохранить историю и INTERNAL-архив
+      - name: Обновить версии JS без кэша
+        run: node refresh-asset-versions.mjs
+
+      - name: Сохранить историю, INTERNAL и версии приложения
         shell: bash
         run: |
           set -euo pipefail
@@ -75,13 +77,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           commit_if_needed() {
-            if git diff --quiet -- keno-history.json internal-forecast-archive.json; then
+            if git diff --quiet -- keno-history.json internal-forecast-archive.json index.html; then
               echo "Новых изменений нет"
               return 1
             fi
 
-            git add keno-history.json internal-forecast-archive.json
-            git commit -m "Матрица столбов · история + INTERNAL ИИ"
+            git add keno-history.json internal-forecast-archive.json index.html
+            git commit -m "Матрица столбов · история + INTERNAL ИИ + cache bust"
             return 0
           }
 
@@ -102,18 +104,17 @@ jobs:
               exit 1
             fi
 
-            echo "main изменился — синхронизирую и пересчитываю"
             git fetch origin main
             git reset --hard origin/main
 
             cp keno-history.json /tmp/keno-history.before-retry.json
 
             if ! node stoloto-column-matrix-update.mjs; then
-              echo "СТОЛОТО: нет ответа при повторе"
               cp /tmp/keno-history.before-retry.json keno-history.json
             fi
 
             node internal-forecast-runner.mjs
+            node refresh-asset-versions.mjs
 
             if ! commit_if_needed; then
               echo "Другой запуск уже сохранил эти данные — PASS"
