@@ -846,12 +846,12 @@
       "hitRate": 0.31666666666666665,
       "top1Rate": 0.13333333333333333
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326198,
+    "actualColumn": 2,
+    "actualTime": "08:02",
+    "actualDate": "25.08.26",
+    "result": "MISS"
   },
   {
     "id": "internal-326198-1787634764907",
