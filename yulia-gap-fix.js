@@ -1,24 +1,28 @@
 'use strict';
 
 /*
-  ПОЗИТРОН · МАТРИЦА СТОЛБОВ v1.9 ALL-FIXES
+  ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.0 ARCHIVE-SYNC-FIX
 
-  — внутренний ИИ: АВТО;
-  — постоянный INTERNAL-архив берётся из GitHub;
-  — внешний OpenAI: ТОЛЬКО ВРУЧНУЮ;
-  — ручные OPENAI-записи не удаляются;
-  — всегда показывается следующий ТИРАЖ №... · HH:MM;
-  — кнопка внешнего ИИ всегда видна как "СДЕЛАТЬ ПРОГНОЗ";
-  — ai-analyzer.js не загружается дважды без необходимости.
+  Исправляет:
+  1) свежий INTERNAL-архив берётся напрямую из raw GitHub, а не из
+     возможного задержанного GitHub Pages;
+  2) после ручного OpenAI со статусом "СОХРАНЕНО" история принудительно
+     перечитывается из localStorage и перерисовывается через штатный refreshUi;
+  3) INTERNAL + OPENAI объединяются по одному targetDraw и не теряются;
+  4) внешний OpenAI остаётся только ручным;
+  5) следующий тираж и время показываются постоянно.
 */
 
 (() => {
   const INTERVAL_KEY = 'pozitron_column_matrix_interval_v1';
   const FAST_INTERVAL = '60000';
   const AI_ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
-  const INTERNAL_ARCHIVE_URL = 'internal-forecast-archive.json';
-  const HISTORY_URL =
-    'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
+
+  const RAW_BASE =
+    'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main';
+
+  const INTERNAL_ARCHIVE_URL = `${RAW_BASE}/internal-forecast-archive.json`;
+  const HISTORY_URL = `${RAW_BASE}/keno-history.json`;
 
   const CURRENT_SCHEDULE = [
     '00:02','00:17','00:32','01:02','01:17','01:32',
@@ -36,10 +40,101 @@
 
   let lastWakeRefresh = 0;
   let rescueLoaded = false;
-  let targetRefreshBusy = false;
+  let syncBusy = false;
+  let targetBusy = false;
+  let lastSavedStamp = '';
 
   function safeJson(raw, fallback) {
     try { return JSON.parse(raw); } catch (_) { return fallback; }
+  }
+
+  function mergeArchives(local, remoteInternal) {
+    const localList = Array.isArray(local) ? local : [];
+    const remoteList = Array.isArray(remoteInternal) ? remoteInternal : [];
+
+    // Все ручные OpenAI с телефона сохраняем.
+    const external = localList.filter(
+      r => (r?.provider || 'openai') !== 'internal'
+    );
+
+    // INTERNAL считаем авторитетным из GitHub, но если там временно
+    // чего-то нет, локальную INTERNAL запись не удаляем.
+    const localInternal = localList.filter(
+      r => (r?.provider || '') === 'internal'
+    );
+    const all = [...external, ...localInternal, ...remoteList];
+
+    const map = new Map();
+    for (const rec of all) {
+      if (!rec || !Number.isFinite(Number(rec.targetDraw))) continue;
+      const provider = rec.provider || 'openai';
+      const key = `${provider}:${Number(rec.targetDraw)}:${Number(rec.baseDraw || 0)}`;
+
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, rec);
+        continue;
+      }
+
+      // Более свежая/завершённая запись выигрывает.
+      const prevSettled = !!prev.settled;
+      const nextSettled = !!rec.settled;
+      if (nextSettled && !prevSettled) {
+        map.set(key, rec);
+        continue;
+      }
+
+      const prevTime = Date.parse(prev.createdAt || '') || 0;
+      const nextTime = Date.parse(rec.createdAt || '') || 0;
+      if (nextTime >= prevTime) map.set(key, rec);
+    }
+
+    return [...map.values()]
+      .sort((a, b) => {
+        const td = Number(a.targetDraw || 0) - Number(b.targetDraw || 0);
+        if (td) return td;
+        return String(a.provider || '').localeCompare(String(b.provider || ''));
+      })
+      .slice(-200);
+  }
+
+  function forceAiRefresh() {
+    const aiView = document.getElementById('aiView');
+    const aiBtn = document.getElementById('aiViewBtn');
+
+    // Штатный click вызывает refreshUi() внутри ai-analyzer.js.
+    if (aiView?.classList.contains('active') && aiBtn) {
+      aiBtn.click();
+    }
+  }
+
+  async function syncPersistentInternalArchive(forceRender = true) {
+    if (syncBusy) return;
+    syncBusy = true;
+
+    try {
+      const r = await fetch(`${INTERNAL_ARCHIVE_URL}?ts=${Date.now()}`, {
+        cache: 'no-store'
+      });
+      if (!r.ok) throw new Error(`INTERNAL archive HTTP ${r.status}`);
+
+      const remoteInternal = await r.json();
+      const local = safeJson(
+        localStorage.getItem(AI_ARCHIVE_KEY) || '[]',
+        []
+      );
+
+      const merged = mergeArchives(local, remoteInternal);
+      localStorage.setItem(AI_ARCHIVE_KEY, JSON.stringify(merged));
+
+      if (forceRender) {
+        setTimeout(forceAiRefresh, 50);
+      }
+    } catch (e) {
+      console.warn('INTERNAL archive sync failed', e);
+    } finally {
+      syncBusy = false;
+    }
   }
 
   function walkHistory(value, out = []) {
@@ -50,7 +145,8 @@
 
     if (value && typeof value === 'object') {
       const draw = Number(value.draw);
-      const time = String(value.time || '').match(/\d{1,2}:\d{2}/)?.[0] || '';
+      const time =
+        String(value.time || '').match(/\d{1,2}:\d{2}/)?.[0] || '';
 
       if (Number.isFinite(draw) && time) {
         out.push({ draw, time });
@@ -70,6 +166,7 @@
     if (!m) return { draw: Number(latest.draw) + 1, time: '—' };
 
     const cur = Number(m[1]) * 60 + Number(m[2]);
+
     const times = CURRENT_SCHEDULE.map(t => {
       const [h, min] = t.split(':').map(Number);
       return { t, n: h * 60 + min };
@@ -80,7 +177,10 @@
   }
 
   function analysisBusy() {
-    const s = String(document.getElementById('aiStatus')?.textContent || '').toUpperCase();
+    const s = String(
+      document.getElementById('aiStatus')?.textContent || ''
+    ).toUpperCase();
+
     return /АНАЛИЗ|ОБНОВЛЯЮ|ОТПРАВЛЯЮ|ЗАГРУЖАЮ/.test(s);
   }
 
@@ -95,18 +195,22 @@
     const btn = document.getElementById('aiRunBtn');
     if (btn) {
       btn.textContent = 'СДЕЛАТЬ ПРОГНОЗ';
-      btn.title = `Внешний OpenAI · прогноз на тираж №${target.draw} · ${target.time}`;
+      btn.title =
+        `Внешний OpenAI · прогноз на тираж №${target.draw} · ${target.time}`;
+
       if (!analysisBusy()) btn.disabled = false;
     }
   }
 
   async function refreshExternalTarget() {
-    if (targetRefreshBusy) return;
-    targetRefreshBusy = true;
+    if (targetBusy) return;
+    targetBusy = true;
 
     try {
-      const r = await fetch(`${HISTORY_URL}?_=${Date.now()}`, { cache: 'no-store' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const r = await fetch(`${HISTORY_URL}?ts=${Date.now()}`, {
+        cache: 'no-store'
+      });
+      if (!r.ok) throw new Error(`History HTTP ${r.status}`);
 
       const payload = await r.json();
       const draws = walkHistory(payload)
@@ -115,56 +219,11 @@
       const latest = draws.at(-1);
       if (latest) applyExternalTarget(inferNext(latest));
     } catch (e) {
-      // При временной недоступности GitHub/Столото кнопка не исчезает.
       const btn = document.getElementById('aiRunBtn');
       if (btn && !analysisBusy()) btn.disabled = false;
-      console.warn('external target refresh', e);
+      console.warn('next target refresh failed', e);
     } finally {
-      targetRefreshBusy = false;
-    }
-  }
-
-  function syncPersistentInternalArchive() {
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', `${INTERNAL_ARCHIVE_URL}?_=${Date.now()}`, false);
-      xhr.send(null);
-
-      if (xhr.status < 200 || xhr.status >= 300) return;
-
-      const remote = safeJson(xhr.responseText, []);
-      if (!Array.isArray(remote)) return;
-
-      const local = safeJson(localStorage.getItem(AI_ARCHIVE_KEY) || '[]', []);
-
-      // OPENAI остаётся ручным и локальным.
-      const manualExternal = (Array.isArray(local) ? local : [])
-        .filter(r => (r?.provider || 'openai') !== 'internal');
-
-      // INTERNAL приходит из постоянного GitHub-архива.
-      const remoteInternal = remote
-        .filter(r => (r?.provider || '') === 'internal');
-
-      const map = new Map();
-
-      for (const rec of [...manualExternal, ...remoteInternal]) {
-        const provider = rec?.provider || 'openai';
-        const key = rec?.id || `${provider}:${rec?.baseDraw}:${rec?.targetDraw}`;
-        map.set(key, rec);
-      }
-
-      const merged = [...map.values()]
-        .sort((a, b) => {
-          const da = Number(a?.targetDraw || 0);
-          const db = Number(b?.targetDraw || 0);
-          if (da !== db) return da - db;
-          return String(a?.createdAt || '').localeCompare(String(b?.createdAt || ''));
-        })
-        .slice(-120);
-
-      localStorage.setItem(AI_ARCHIVE_KEY, JSON.stringify(merged));
-    } catch (e) {
-      console.warn('persistent internal archive sync', e);
+      targetBusy = false;
     }
   }
 
@@ -175,7 +234,9 @@
     if (!interval || !save) return;
 
     interval.value = FAST_INTERVAL;
-    if (localStorage.getItem(INTERVAL_KEY) !== FAST_INTERVAL) save.click();
+    if (localStorage.getItem(INTERVAL_KEY) !== FAST_INTERVAL) {
+      save.click();
+    }
   }
 
   function refreshOnWake() {
@@ -185,7 +246,7 @@
     if (now - lastWakeRefresh < 15000) return;
     lastWakeRefresh = now;
 
-    syncPersistentInternalArchive();
+    syncPersistentInternalArchive(true);
     refreshExternalTarget();
 
     const btn = document.getElementById('syncBtn');
@@ -193,8 +254,11 @@
   }
 
   function rescueAiUiIfNeeded() {
-    if (document.getElementById('aiViewBtn') &&
-        document.getElementById('aiRunBtn')) {
+    if (
+      document.getElementById('aiViewBtn') &&
+      document.getElementById('aiRunBtn')
+    ) {
+      syncPersistentInternalArchive(true);
       refreshExternalTarget();
       return;
     }
@@ -203,36 +267,50 @@
     rescueLoaded = true;
 
     const s = document.createElement('script');
-    s.src = `ai-analyzer.js?v=all-fixes-${Date.now()}`;
+    s.src = `ai-analyzer.js?v=archive-sync-${Date.now()}`;
     s.dataset.pozitronAiRescue = '1';
 
     s.onload = () => {
-      setTimeout(refreshExternalTarget, 100);
-    };
-
-    s.onerror = () => {
-      console.error('Не удалось восстановить ai-analyzer.js');
+      setTimeout(() => {
+        syncPersistentInternalArchive(true);
+        refreshExternalTarget();
+      }, 100);
     };
 
     document.body.appendChild(s);
   }
 
-  function watchAiButton() {
+  function watchAiState() {
     const observer = new MutationObserver(() => {
       const btn = document.getElementById('aiRunBtn');
       const target = document.getElementById('aiTarget');
+      const status = document.getElementById('aiStatus');
 
-      if (!btn || !target) return;
-
-      if (!analysisBusy()) {
+      if (btn && !analysisBusy()) {
         btn.disabled = false;
-        if (btn.textContent.trim() !== 'СДЕЛАТЬ ПРОГНОЗ') {
-          btn.textContent = 'СДЕЛАТЬ ПРОГНОЗ';
-        }
+        btn.textContent = 'СДЕЛАТЬ ПРОГНОЗ';
       }
 
-      if (/ПРОГНОЗ НЕ СОЗДАН/i.test(target.textContent || '')) {
+      if (target && /ПРОГНОЗ НЕ СОЗДАН/i.test(target.textContent || '')) {
         refreshExternalTarget();
+      }
+
+      // Ключевой FIX:
+      // как только внешний ai-analyzer пишет СОХРАНЕНО,
+      // перечитываем localStorage + свежий INTERNAL и заново рисуем историю.
+      const text = String(status?.textContent || '').trim().toUpperCase();
+      if (text === 'СОХРАНЕНО') {
+        const archive = localStorage.getItem(AI_ARCHIVE_KEY) || '';
+        const stamp = `${archive.length}:${archive.slice(-120)}`;
+
+        if (stamp !== lastSavedStamp) {
+          lastSavedStamp = stamp;
+
+          setTimeout(async () => {
+            await syncPersistentInternalArchive(false);
+            forceAiRefresh();
+          }, 80);
+        }
       }
     });
 
@@ -245,29 +323,36 @@
     });
   }
 
-  syncPersistentInternalArchive();
   enableFastNativeAuto();
-  watchAiButton();
+  watchAiState();
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') refreshOnWake();
   });
-
   window.addEventListener('focus', refreshOnWake);
   window.addEventListener('pageshow', refreshOnWake);
   window.addEventListener('online', refreshOnWake);
 
-  // Не грузим ai-analyzer.js преждевременно второй раз.
-  // Сначала даём штатному script из index.html отработать.
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(rescueAiUiIfNeeded, 300);
-      setTimeout(refreshExternalTarget, 500);
-    }, { once: true });
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        setTimeout(rescueAiUiIfNeeded, 300);
+        setTimeout(() => syncPersistentInternalArchive(true), 450);
+        setTimeout(refreshExternalTarget, 550);
+      },
+      { once: true }
+    );
   } else {
     setTimeout(rescueAiUiIfNeeded, 300);
-    setTimeout(refreshExternalTarget, 500);
+    setTimeout(() => syncPersistentInternalArchive(true), 450);
+    setTimeout(refreshExternalTarget, 550);
   }
 
-  setInterval(refreshExternalTarget, 60000);
+  // Раз в минуту одновременно подтягиваем и новые INTERNAL-записи,
+  // и следующую цель.
+  setInterval(() => {
+    syncPersistentInternalArchive(true);
+    refreshExternalTarget();
+  }, 60000);
 })();
