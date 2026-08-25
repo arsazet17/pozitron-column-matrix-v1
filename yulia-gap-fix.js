@@ -172,3 +172,14 @@
   // Здесь НЕТ загрузки ai-analyzer.js.
   // Его единственный запуск находится в index.html.
 })();
+
+
+/* Подключение итогового значка архива: 🔥 / ❌ / — */
+(() => {
+  if (document.querySelector('script[data-archive-result-icon-fix]')) return;
+  const s = document.createElement('script');
+  s.src = 'archive-result-icon-fix.js?v=2';
+  s.defer = true;
+  s.dataset.archiveResultIconFix = '1';
+  document.head.appendChild(s);
+})();
