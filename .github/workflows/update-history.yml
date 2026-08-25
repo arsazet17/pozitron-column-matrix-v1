@@ -42,16 +42,29 @@ jobs:
           npm install playwright
           npx playwright install --with-deps chromium
 
-      - name: Столото · обновить историю или записать НЕТ ОТВЕТА
+      - name: Столото · обновить историю безопасно
+        shell: bash
         env:
           STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
           STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
-        run: node stoloto-safe-update.mjs
+        run: |
+          set -u
 
-      - name: Внутренний ИИ · прогноз + постоянный архив
-        run: node internal-forecast-runner.mjs
+          # Сохраняем гарантированно рабочую историю перед обращением к Столото.
+          cp keno-history.json /tmp/keno-history.before-stoloto.json
 
-      - name: Сохранить историю, статус Столото и внутренний ИИ-архив
+          if node stoloto-column-matrix-update.mjs; then
+            echo "СТОЛОТО: ответ получен"
+          else
+            echo "СТОЛОТО: НЕТ ОТВЕТА / ВРЕМЕННАЯ ОШИБКА"
+            echo "Сохраняю предыдущий проверенный архив без изменений"
+            cp /tmp/keno-history.before-stoloto.json keno-history.json
+          fi
+
+          # Этот шаг намеренно завершается успешно:
+          # временная недоступность Столото не должна ломать приложение.
+
+      - name: Сохранить только проверенные новые тиражи
         shell: bash
         env:
           STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
@@ -63,13 +76,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           commit_if_needed() {
-            if git diff --quiet -- keno-history.json internal-forecast-archive.json stoloto-status.json; then
-              echo "Новых изменений нет"
+            if git diff --quiet -- keno-history.json; then
+              echo "Новых проверенных тиражей нет. Старый архив сохранён."
               return 1
             fi
 
-            git add keno-history.json internal-forecast-archive.json stoloto-status.json
-            git commit -m "Матрица столбов · история + ИИ + статус Столото"
+            git add keno-history.json
+            git commit -m "Столото · Матрица столбов · автообновление"
             return 0
           }
 
@@ -90,15 +103,18 @@ jobs:
               exit 1
             fi
 
-            echo "main изменилась — беру свежую версию и пересчитываю"
+            echo "main изменилась — беру свежую версию"
             git fetch origin main
             git reset --hard origin/main
 
-            node stoloto-safe-update.mjs
-            node internal-forecast-runner.mjs
+            cp keno-history.json /tmp/keno-history.before-retry.json
+            if ! node stoloto-column-matrix-update.mjs; then
+              echo "СТОЛОТО: нет ответа при повторе — сохраняю текущий архив"
+              cp /tmp/keno-history.before-retry.json keno-history.json
+            fi
 
             if ! commit_if_needed; then
-              echo "Другой запуск уже сохранил эти данные — PASS"
+              echo "Другой запуск уже сохранил данные или новых данных нет — PASS"
               exit 0
             fi
           done
