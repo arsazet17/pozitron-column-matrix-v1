@@ -2998,12 +2998,12 @@
       "hitRate": 0.325,
       "top1Rate": 0.15
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326208,
+    "actualColumn": 1,
+    "actualTime": "11:32",
+    "actualDate": "25.08.26",
+    "result": "TOP3"
   },
   {
     "id": "internal-326208-1787647331248",
