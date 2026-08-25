@@ -6908,12 +6908,12 @@
       "hitRate": 0.3,
       "top1Rate": 0.15
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326226,
+    "actualColumn": 4,
+    "actualTime": "18:02",
+    "actualDate": "25.08.26",
+    "result": "MISS"
   },
   {
     "id": "internal-326226-1787670598002",
