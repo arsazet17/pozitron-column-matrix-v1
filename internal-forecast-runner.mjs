@@ -1,7 +1,6 @@
 'use strict';
 
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { chromium } from 'playwright';
@@ -93,9 +92,7 @@ try {
     }
   }, { key: STORAGE_KEY, archive: persistentInternal });
 
-  // ai-analyzer.js всегда думает, что читает свежий raw GitHub.
-  // В Action подсовываем ему уже обновлённый ЛОКАЛЬНЫЙ keno-history.json,
-  // который только что получил stoloto-column-matrix-update.mjs.
+  // Всегда анализируем уже обновлённый локальный keno-history.json из этого Action.
   await context.route('**/keno-history.json*', async route => {
     await route.fulfill({
       status: 200,
@@ -134,9 +131,9 @@ try {
     .filter(r => (r?.provider || '') === 'internal')
     .sort((a, b) => Number(a.targetDraw || 0) - Number(b.targetDraw || 0));
 
-  // Дедупликация: один внутренний прогноз на один базовый тираж.
   const byBase = new Map();
   for (const rec of internal) byBase.set(Number(rec.baseDraw), rec);
+
   const finalArchive = [...byBase.values()]
     .sort((a, b) => Number(a.targetDraw || 0) - Number(b.targetDraw || 0))
     .slice(-500);
@@ -144,7 +141,9 @@ try {
   await fs.writeFile(ARCHIVE_FILE, JSON.stringify(finalArchive, null, 2) + '\n', 'utf8');
 
   const current = finalArchive.find(r => Number(r.baseDraw) === latestDraw);
-  console.log(`INTERNAL ARCHIVE PASS · база №${latestDraw} · прогноз №${current?.targetDraw ?? '—'} · TOP-3 ${(current?.picks || []).join(',')}`);
+  console.log(
+    `INTERNAL ARCHIVE PASS · база №${latestDraw} · прогноз №${current?.targetDraw ?? '—'} · TOP-3 ${(current?.picks || []).join(',')}`
+  );
 } finally {
   if (browser) await browser.close();
   await new Promise(resolve => server.close(resolve));
