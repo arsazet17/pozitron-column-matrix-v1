@@ -48,7 +48,10 @@ jobs:
           STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
         run: node stoloto-column-matrix-update.mjs
 
-      - name: Сохранить только проверенные новые тиражи
+      - name: Внутренний ИИ · прогноз + постоянный архив
+        run: node internal-forecast-runner.mjs
+
+      - name: Сохранить историю и внутренний ИИ-архив
         shell: bash
         env:
           STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
@@ -60,13 +63,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           commit_if_needed() {
-            if git diff --quiet -- keno-history.json; then
-              echo "Новых тиражей нет"
+            if git diff --quiet -- keno-history.json internal-forecast-archive.json; then
+              echo "Новых изменений нет"
               return 1
             fi
 
-            git add keno-history.json
-            git commit -m "Столото · Матрица столбов · автообновление"
+            git add keno-history.json internal-forecast-archive.json
+            git commit -m "Столото · Матрица столбов · история + внутренний ИИ"
             return 0
           }
 
@@ -87,14 +90,15 @@ jobs:
               exit 1
             fi
 
-            echo "main изменилась — беру свежую версию и повторяю updater"
+            echo "main изменилась — беру свежую версию и пересчитываю"
             git fetch origin main
             git reset --hard origin/main
 
             node stoloto-column-matrix-update.mjs
+            node internal-forecast-runner.mjs
 
             if ! commit_if_needed; then
-              echo "Другой запуск уже сохранил эти тиражи — PASS"
+              echo "Другой запуск уже сохранил эти данные — PASS"
               exit 0
             fi
           done
