@@ -1,316 +1,413 @@
 'use strict';
 
 /*
-  ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.0 ARCHIVE-SYNC-FIX
+  ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.1
+  ЖЁСТКИЙ FIX ПРЕДВАРИТЕЛЬНОГО АРХИВА.
 
-  Исправляет:
-  1) свежий INTERNAL-архив берётся напрямую из raw GitHub, а не из
-     возможного задержанного GitHub Pages;
-  2) после ручного OpenAI со статусом "СОХРАНЕНО" история принудительно
-     перечитывается из localStorage и перерисовывается через штатный refreshUi;
-  3) INTERNAL + OPENAI объединяются по одному targetDraw и не теряются;
-  4) внешний OpenAI остаётся только ручным;
-  5) следующий тираж и время показываются постоянно.
+  Закон:
+  — INTERNAL есть всегда, если он создан GitHub Action;
+  — OPENAI добавляется только после успешного ручного прогноза;
+  — оба прогноза отображаются в одной строке targetDraw;
+  — предварительный тираж показывается сразу, даже пока факта ещё нет;
+  — после появления факта эта же строка получает ПОПАЛ/МИМО;
+  — ai-analyzer.js здесь НЕ загружается повторно.
 */
 
 (() => {
-  const INTERVAL_KEY = 'pozitron_column_matrix_interval_v1';
-  const FAST_INTERVAL = '60000';
-  const AI_ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
-
+  const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const RAW_BASE =
     'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main';
-
-  const INTERNAL_ARCHIVE_URL = `${RAW_BASE}/internal-forecast-archive.json`;
+  const INTERNAL_URL = `${RAW_BASE}/internal-forecast-archive.json`;
   const HISTORY_URL = `${RAW_BASE}/keno-history.json`;
 
-  const CURRENT_SCHEDULE = [
-    '00:02','00:17','00:32','01:02','01:17','01:32',
-    '02:02','02:17','02:32','03:02','03:32','04:02',
-    '04:17','04:32','05:02','05:17','05:32','06:02',
-    '06:17','06:32','07:02','07:32','08:02','08:17',
-    '08:32','09:02','09:17','09:32','10:02','10:17',
-    '10:32','11:02','11:32','12:02','12:17','12:32',
-    '13:02','13:17','13:32','14:02','14:17','14:32',
-    '15:02','15:32','16:02','16:17','16:32','17:02',
-    '17:17','17:32','18:02','18:17','18:32','19:02',
-    '19:32','20:02','20:17','20:32','21:02','21:17',
-    '21:32','22:02','22:17','22:32','23:02','23:32'
-  ];
+  let busy = false;
+  let lastFingerprint = '';
 
-  let lastWakeRefresh = 0;
-  let rescueLoaded = false;
-  let syncBusy = false;
-  let targetBusy = false;
-  let lastSavedStamp = '';
+  const esc = value => String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 
   function safeJson(raw, fallback) {
-    try { return JSON.parse(raw); } catch (_) { return fallback; }
+    try { return JSON.parse(raw); }
+    catch { return fallback; }
   }
 
-  function mergeArchives(local, remoteInternal) {
-    const localList = Array.isArray(local) ? local : [];
-    const remoteList = Array.isArray(remoteInternal) ? remoteInternal : [];
+  function shortDate(value) {
+    const raw = String(value || '').trim();
+    let m = raw.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{4})$/);
+    if (m) return `${m[1]}.${m[2]}.${m[3].slice(-2)}`;
+    m = raw.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{2})$/);
+    if (m) return `${m[1]}.${m[2]}.${m[3]}`;
+    m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[3]}.${m[2]}.${m[1].slice(-2)}`;
+    return raw || '—';
+  }
 
-    // Все ручные OpenAI с телефона сохраняем.
-    const external = localList.filter(
-      r => (r?.provider || 'openai') !== 'internal'
-    );
+  function provider(rec) {
+    return (rec?.provider || 'openai') === 'internal'
+      ? 'ВНУТРЕННИЙ'
+      : 'OPENAI';
+  }
 
-    // INTERNAL считаем авторитетным из GitHub, но если там временно
-    // чего-то нет, локальную INTERNAL запись не удаляем.
-    const localInternal = localList.filter(
-      r => (r?.provider || '') === 'internal'
-    );
-    const all = [...external, ...localInternal, ...remoteList];
+  function localArchive() {
+    const a = safeJson(localStorage.getItem(ARCHIVE_KEY) || '[]', []);
+    return Array.isArray(a) ? a : [];
+  }
 
+  function dedupeMerge(local, remoteInternal) {
     const map = new Map();
-    for (const rec of all) {
-      if (!rec || !Number.isFinite(Number(rec.targetDraw))) continue;
-      const provider = rec.provider || 'openai';
-      const key = `${provider}:${Number(rec.targetDraw)}:${Number(rec.baseDraw || 0)}`;
+
+    function put(rec) {
+      if (!rec || !Number.isFinite(Number(rec.targetDraw))) return;
+
+      const prov = (rec.provider || 'openai') === 'internal'
+        ? 'internal'
+        : 'openai';
+
+      const key =
+        `${prov}:${Number(rec.targetDraw)}:${Number(rec.baseDraw || 0)}`;
 
       const prev = map.get(key);
+
       if (!prev) {
         map.set(key, rec);
-        continue;
+        return;
       }
 
-      // Более свежая/завершённая запись выигрывает.
-      const prevSettled = !!prev.settled;
-      const nextSettled = !!rec.settled;
-      if (nextSettled && !prevSettled) {
+      // Завершённая запись сильнее незавершённой.
+      if (!!rec.settled && !prev.settled) {
         map.set(key, rec);
-        continue;
+        return;
       }
 
-      const prevTime = Date.parse(prev.createdAt || '') || 0;
-      const nextTime = Date.parse(rec.createdAt || '') || 0;
-      if (nextTime >= prevTime) map.set(key, rec);
+      const p = Date.parse(prev.createdAt || '') || 0;
+      const n = Date.parse(rec.createdAt || '') || 0;
+      if (n >= p) map.set(key, rec);
     }
+
+    // Сначала всё локальное: это сохраняет старые OPENAI и старый архив.
+    (Array.isArray(local) ? local : []).forEach(put);
+
+    // Затем авторитетный INTERNAL из GitHub.
+    (Array.isArray(remoteInternal) ? remoteInternal : [])
+      .filter(r => (r?.provider || '') === 'internal')
+      .forEach(put);
 
     return [...map.values()]
-      .sort((a, b) => {
-        const td = Number(a.targetDraw || 0) - Number(b.targetDraw || 0);
-        if (td) return td;
-        return String(a.provider || '').localeCompare(String(b.provider || ''));
-      })
-      .slice(-200);
+      .sort((a, b) =>
+        Number(a.targetDraw || 0) - Number(b.targetDraw || 0)
+      )
+      .slice(-250);
   }
 
-  function forceAiRefresh() {
-    const aiView = document.getElementById('aiView');
-    const aiBtn = document.getElementById('aiViewBtn');
+  function historyMap(payload) {
+    const out = new Map();
 
-    // Штатный click вызывает refreshUi() внутри ai-analyzer.js.
-    if (aiView?.classList.contains('active') && aiBtn) {
-      aiBtn.click();
-    }
-  }
-
-  async function syncPersistentInternalArchive(forceRender = true) {
-    if (syncBusy) return;
-    syncBusy = true;
-
-    try {
-      const r = await fetch(`${INTERNAL_ARCHIVE_URL}?ts=${Date.now()}`, {
-        cache: 'no-store'
-      });
-      if (!r.ok) throw new Error(`INTERNAL archive HTTP ${r.status}`);
-
-      const remoteInternal = await r.json();
-      const local = safeJson(
-        localStorage.getItem(AI_ARCHIVE_KEY) || '[]',
-        []
-      );
-
-      const merged = mergeArchives(local, remoteInternal);
-      localStorage.setItem(AI_ARCHIVE_KEY, JSON.stringify(merged));
-
-      if (forceRender) {
-        setTimeout(forceAiRefresh, 50);
+    function walk(v) {
+      if (Array.isArray(v)) {
+        v.forEach(walk);
+        return;
       }
-    } catch (e) {
-      console.warn('INTERNAL archive sync failed', e);
-    } finally {
-      syncBusy = false;
-    }
-  }
 
-  function walkHistory(value, out = []) {
-    if (Array.isArray(value)) {
-      value.forEach(v => walkHistory(v, out));
-      return out;
-    }
+      if (!v || typeof v !== 'object') return;
 
-    if (value && typeof value === 'object') {
-      const draw = Number(value.draw);
-      const time =
-        String(value.time || '').match(/\d{1,2}:\d{2}/)?.[0] || '';
+      const draw = Number(v.draw);
+      const column = Number(v.column);
 
-      if (Number.isFinite(draw) && time) {
-        out.push({ draw, time });
-      } else {
-        Object.values(value).forEach(v => {
-          if (v && typeof v === 'object') walkHistory(v, out);
+      if (
+        Number.isFinite(draw) &&
+        Number.isInteger(column) &&
+        column >= 1 &&
+        column <= 10
+      ) {
+        out.set(draw, {
+          draw,
+          column,
+          date: String(v.date || ''),
+          time: String(v.time || '')
         });
+        return;
       }
+
+      Object.values(v).forEach(x => {
+        if (x && typeof x === 'object') walk(x);
+      });
     }
+
+    walk(payload);
     return out;
   }
 
-  function inferNext(latest) {
-    if (!latest) return null;
+  function settle(records, facts) {
+    let changed = false;
 
-    const m = String(latest.time || '').match(/(\d{1,2}):(\d{2})/);
-    if (!m) return { draw: Number(latest.draw) + 1, time: '—' };
+    for (const rec of records) {
+      const fact = facts.get(Number(rec.targetDraw));
+      if (!fact) continue;
 
-    const cur = Number(m[1]) * 60 + Number(m[2]);
+      const pos = Array.isArray(rec.picks)
+        ? rec.picks.indexOf(fact.column)
+        : -1;
 
-    const times = CURRENT_SCHEDULE.map(t => {
-      const [h, min] = t.split(':').map(Number);
-      return { t, n: h * 60 + min };
+      const result =
+        pos === 0 ? 'TOP1' :
+        pos > 0 ? 'TOP3' :
+        'MISS';
+
+      if (!rec.settled) { rec.settled = true; changed = true; }
+      if (rec.actualDraw !== fact.draw) {
+        rec.actualDraw = fact.draw; changed = true;
+      }
+      if (rec.actualColumn !== fact.column) {
+        rec.actualColumn = fact.column; changed = true;
+      }
+      if (rec.actualDate !== fact.date) {
+        rec.actualDate = fact.date; changed = true;
+      }
+      if (rec.actualTime !== fact.time) {
+        rec.actualTime = fact.time; changed = true;
+      }
+      if (rec.result !== result) {
+        rec.result = result; changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  function resultText(rec) {
+    if (!rec.settled) return 'ЖДЁМ';
+    if (rec.result === 'TOP1' || rec.result === 'TOP3') return '🔥 ПОПАЛ';
+    return 'МИМО';
+  }
+
+  function render(records) {
+    const host = document.getElementById('aiArchive');
+    if (!host) return false;
+
+    const groups = new Map();
+
+    records.forEach(rec => {
+      const key = Number(rec.targetDraw);
+      if (!Number.isFinite(key)) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(rec);
     });
 
-    const next = times.find(x => x.n > cur) || times[0];
-    return { draw: Number(latest.draw) + 1, time: next.t };
-  }
+    const ordered = [...groups.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, 40);
 
-  function analysisBusy() {
-    const s = String(
-      document.getElementById('aiStatus')?.textContent || ''
-    ).toUpperCase();
-
-    return /АНАЛИЗ|ОБНОВЛЯЮ|ОТПРАВЛЯЮ|ЗАГРУЖАЮ/.test(s);
-  }
-
-  function applyExternalTarget(target) {
-    if (!target) return;
-
-    const targetEl = document.getElementById('aiTarget');
-    if (targetEl) {
-      targetEl.textContent = `ТИРАЖ №${target.draw} · ${target.time}`;
+    if (!ordered.length) {
+      host.innerHTML =
+        '<div class="ai-empty">Архив пока пуст.</div>';
+      return true;
     }
 
-    const btn = document.getElementById('aiRunBtn');
-    if (btn) {
-      btn.textContent = 'СДЕЛАТЬ ПРОГНОЗ';
-      btn.title =
-        `Внешний OpenAI · прогноз на тираж №${target.draw} · ${target.time}`;
+    host.innerHTML = `
+      <div class="ai-history">
+        <div class="ai-history-labels">
+          <span>ТИРАЖ</span>
+          <span>ДАТА</span>
+          <span>ВРЕМЯ</span>
+          <span>ИТОГ</span>
+          <span></span>
+        </div>
 
-      if (!analysisBusy()) btn.disabled = false;
-    }
+        ${ordered.map(([draw, recs]) => {
+          recs.sort((a, b) => {
+            const pa = (a.provider || 'openai') === 'internal' ? 0 : 1;
+            const pb = (b.provider || 'openai') === 'internal' ? 0 : 1;
+            return pa - pb;
+          });
+
+          const ref = recs[0];
+          const settled = recs.filter(r => r.settled);
+          const anyHit = settled.some(
+            r => r.result === 'TOP1' || r.result === 'TOP3'
+          );
+
+          const actualDate =
+            settled[0]?.actualDate ||
+            ref.targetDate ||
+            '—';
+
+          const actualTime =
+            settled[0]?.actualTime ||
+            ref.targetTime ||
+            '—';
+
+          const icon = anyHit ? '🔥' : '—';
+
+          return `
+            <details class="ai-history-row"
+              ${draw === ordered[0][0] ? 'open' : ''}>
+              <summary class="ai-history-summary">
+                <span class="ai-hdraw">№${draw}</span>
+                <span class="ai-hdate">${esc(shortDate(actualDate))}</span>
+                <span class="ai-htime">${esc(String(actualTime).slice(0,5))}</span>
+                <span class="ai-hresult">${icon}</span>
+                <span class="ai-harrow">▼</span>
+              </summary>
+
+              <div class="ai-history-body">
+                ${recs.map(rec => {
+                  const hit =
+                    rec.settled &&
+                    (rec.result === 'TOP1' || rec.result === 'TOP3');
+
+                  const picks = Array.isArray(rec.picks)
+                    ? rec.picks.slice(0,3)
+                    : [];
+
+                  return `
+                    <div class="ai-provider-block ${hit ? 'provider-hit' : ''}">
+                      <div class="ai-provider-title">
+                        <b>${provider(rec)}</b>
+                        <span>${resultText(rec)}</span>
+                      </div>
+
+                      <div class="ai-history-picks">
+                        ${picks.map((x, i) => `
+                          <div class="ai-history-pick hp${i+1}
+                            ${hit && Number(x) === Number(rec.actualColumn)
+                              ? 'actual-hit'
+                              : ''}">
+                            <small>TOP-${i+1}</small>
+                            <b>СТ${x}</b>
+                          </div>
+                        `).join('')}
+                      </div>
+
+                      ${
+                        rec.settled
+                          ? `<div class="ai-history-fact">
+                              ВЫШЕЛ:
+                              <strong class="${hit ? 'actual-green' : ''}">
+                                СТ${rec.actualColumn}
+                              </strong>
+                              ${
+                                hit
+                                  ? '<span class="ok">✅🔥</span>'
+                                  : '<span class="miss">❌ МИМО</span>'
+                              }
+                            </div>`
+                          : `<div class="ai-history-fact muted">
+                              Результат ещё не появился.
+                            </div>`
+                      }
+
+                      ${
+                        rec.summary
+                          ? `<div class="ai-history-note">
+                              ${esc(rec.summary)}
+                            </div>`
+                          : ''
+                      }
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </details>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    return true;
   }
 
-  async function refreshExternalTarget() {
-    if (targetBusy) return;
-    targetBusy = true;
+  async function syncAndRender() {
+    if (busy) return;
+    busy = true;
 
     try {
-      const r = await fetch(`${HISTORY_URL}?ts=${Date.now()}`, {
-        cache: 'no-store'
-      });
-      if (!r.ok) throw new Error(`History HTTP ${r.status}`);
+      const [ir, hr] = await Promise.all([
+        fetch(`${INTERNAL_URL}?ts=${Date.now()}`, { cache: 'no-store' }),
+        fetch(`${HISTORY_URL}?ts=${Date.now()}`, { cache: 'no-store' })
+      ]);
 
-      const payload = await r.json();
-      const draws = walkHistory(payload)
-        .sort((a, b) => Number(a.draw) - Number(b.draw));
+      const remoteInternal =
+        ir.ok ? await ir.json() : [];
 
-      const latest = draws.at(-1);
-      if (latest) applyExternalTarget(inferNext(latest));
+      const history =
+        hr.ok ? await hr.json() : [];
+
+      const merged = dedupeMerge(localArchive(), remoteInternal);
+      const facts = historyMap(history);
+
+      settle(merged, facts);
+
+      // Сохраняем объединённый архив обратно:
+      // OPENAI не теряется, INTERNAL всегда подмешивается.
+      localStorage.setItem(
+        ARCHIVE_KEY,
+        JSON.stringify(merged.slice(-200))
+      );
+
+      const fingerprint = JSON.stringify(
+        merged.map(r => [
+          r.provider,
+          r.targetDraw,
+          r.settled,
+          r.result,
+          r.actualColumn
+        ])
+      );
+
+      // Рисуем всегда при первом запуске или изменениях.
+      if (fingerprint !== lastFingerprint ||
+          !document.querySelector('#aiArchive .ai-history')) {
+        lastFingerprint = fingerprint;
+        render(merged);
+      }
     } catch (e) {
-      const btn = document.getElementById('aiRunBtn');
-      if (btn && !analysisBusy()) btn.disabled = false;
-      console.warn('next target refresh failed', e);
+      // Даже если сеть упала, локальный OPENAI и уже сохранённый INTERNAL
+      // всё равно должны отображаться.
+      render(localArchive());
+      console.warn('preliminary archive sync', e);
     } finally {
-      targetBusy = false;
+      busy = false;
     }
   }
 
-  function enableFastNativeAuto() {
-    const interval = document.getElementById('intervalSelect');
-    const save = document.getElementById('saveSettings');
+  function keepButtonAndTarget() {
+    const btn = document.getElementById('aiRunBtn');
 
-    if (!interval || !save) return;
+    if (btn) {
+      const status = String(
+        document.getElementById('aiStatus')?.textContent || ''
+      ).toUpperCase();
 
-    interval.value = FAST_INTERVAL;
-    if (localStorage.getItem(INTERVAL_KEY) !== FAST_INTERVAL) {
-      save.click();
+      const working =
+        /АНАЛИЗ|ОБНОВЛЯЮ|ОТПРАВЛЯЮ|ЗАГРУЖАЮ/.test(status);
+
+      if (!working) btn.disabled = false;
+      btn.textContent = 'СДЕЛАТЬ ПРОГНОЗ';
     }
   }
 
-  function refreshOnWake() {
-    if (document.visibilityState === 'hidden') return;
+  function boot() {
+    keepButtonAndTarget();
+    syncAndRender();
 
-    const now = Date.now();
-    if (now - lastWakeRefresh < 15000) return;
-    lastWakeRefresh = now;
-
-    syncPersistentInternalArchive(true);
-    refreshExternalTarget();
-
-    const btn = document.getElementById('syncBtn');
-    if (btn) btn.click();
-  }
-
-  function rescueAiUiIfNeeded() {
-    if (
-      document.getElementById('aiViewBtn') &&
-      document.getElementById('aiRunBtn')
-    ) {
-      syncPersistentInternalArchive(true);
-      refreshExternalTarget();
-      return;
-    }
-
-    if (rescueLoaded) return;
-    rescueLoaded = true;
-
-    const s = document.createElement('script');
-    s.src = `ai-analyzer.js?v=archive-sync-${Date.now()}`;
-    s.dataset.pozitronAiRescue = '1';
-
-    s.onload = () => {
-      setTimeout(() => {
-        syncPersistentInternalArchive(true);
-        refreshExternalTarget();
-      }, 100);
-    };
-
-    document.body.appendChild(s);
-  }
-
-  function watchAiState() {
+    // После ручного прогноза ai-analyzer меняет DOM/статус.
+    // Через 200 мс новый OPENAI уже должен появиться в архиве.
     const observer = new MutationObserver(() => {
-      const btn = document.getElementById('aiRunBtn');
-      const target = document.getElementById('aiTarget');
-      const status = document.getElementById('aiStatus');
+      keepButtonAndTarget();
 
-      if (btn && !analysisBusy()) {
-        btn.disabled = false;
-        btn.textContent = 'СДЕЛАТЬ ПРОГНОЗ';
-      }
+      const status = String(
+        document.getElementById('aiStatus')?.textContent || ''
+      ).trim().toUpperCase();
 
-      if (target && /ПРОГНОЗ НЕ СОЗДАН/i.test(target.textContent || '')) {
-        refreshExternalTarget();
-      }
-
-      // Ключевой FIX:
-      // как только внешний ai-analyzer пишет СОХРАНЕНО,
-      // перечитываем localStorage + свежий INTERNAL и заново рисуем историю.
-      const text = String(status?.textContent || '').trim().toUpperCase();
-      if (text === 'СОХРАНЕНО') {
-        const archive = localStorage.getItem(AI_ARCHIVE_KEY) || '';
-        const stamp = `${archive.length}:${archive.slice(-120)}`;
-
-        if (stamp !== lastSavedStamp) {
-          lastSavedStamp = stamp;
-
-          setTimeout(async () => {
-            await syncPersistentInternalArchive(false);
-            forceAiRefresh();
-          }, 80);
-        }
+      if (
+        status === 'СОХРАНЕНО' ||
+        status.includes('ВНУТРЕННИЙ') ||
+        document.getElementById('aiArchive')
+      ) {
+        setTimeout(syncAndRender, 200);
       }
     });
 
@@ -321,38 +418,24 @@
       attributes: true,
       attributeFilter: ['disabled']
     });
+
+    // Периодический контроль предварительного архива.
+    setInterval(syncAndRender, 5000);
+
+    window.addEventListener('focus', syncAndRender);
+    window.addEventListener('pageshow', syncAndRender);
+    window.addEventListener('online', syncAndRender);
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) syncAndRender();
+    });
   }
-
-  enableFastNativeAuto();
-  watchAiState();
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') refreshOnWake();
-  });
-  window.addEventListener('focus', refreshOnWake);
-  window.addEventListener('pageshow', refreshOnWake);
-  window.addEventListener('online', refreshOnWake);
 
   if (document.readyState === 'loading') {
-    document.addEventListener(
-      'DOMContentLoaded',
-      () => {
-        setTimeout(rescueAiUiIfNeeded, 300);
-        setTimeout(() => syncPersistentInternalArchive(true), 450);
-        setTimeout(refreshExternalTarget, 550);
-      },
-      { once: true }
-    );
+    document.addEventListener('DOMContentLoaded', () => {
+      setTimeout(boot, 500);
+    }, { once: true });
   } else {
-    setTimeout(rescueAiUiIfNeeded, 300);
-    setTimeout(() => syncPersistentInternalArchive(true), 450);
-    setTimeout(refreshExternalTarget, 550);
+    setTimeout(boot, 500);
   }
-
-  // Раз в минуту одновременно подтягиваем и новые INTERNAL-записи,
-  // и следующую цель.
-  setInterval(() => {
-    syncPersistentInternalArchive(true);
-    refreshExternalTarget();
-  }, 60000);
 })();
