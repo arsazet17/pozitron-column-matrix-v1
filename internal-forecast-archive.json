@@ -17161,12 +17161,12 @@
       "hitRate": 0.23333333333333334,
       "top1Rate": 0.09166666666666666
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326273,
+    "actualColumn": 3,
+    "actualTime": "11:02",
+    "actualDate": "26.08.26",
+    "result": "TOP3"
   },
   {
     "id": "internal-326273-1787731830797",
@@ -17377,12 +17377,12 @@
       "hitRate": 0.24166666666666667,
       "top1Rate": 0.1
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326274,
+    "actualColumn": 9,
+    "actualTime": "11:32",
+    "actualDate": "26.08.26",
+    "result": "MISS"
   },
   {
     "id": "internal-326274-1787733615347",
