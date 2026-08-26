@@ -13450,12 +13450,12 @@
       "hitRate": 0.2833333333333333,
       "top1Rate": 0.13333333333333333
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326256,
+    "actualColumn": 2,
+    "actualTime": "05:02",
+    "actualDate": "26.08.26",
+    "result": "MISS"
   },
   {
     "id": "internal-326256-1787710217228",
