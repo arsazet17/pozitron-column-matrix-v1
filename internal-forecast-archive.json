@@ -19114,12 +19114,12 @@
       "hitRate": 0.275,
       "top1Rate": 0.1
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326282,
+    "actualColumn": 4,
+    "actualTime": "14:17",
+    "actualDate": "26.08.26",
+    "result": "TOP3"
   },
   {
     "id": "internal-326282-1787743503105",
