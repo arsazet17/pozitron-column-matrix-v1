@@ -18466,12 +18466,12 @@
       "hitRate": 0.25,
       "top1Rate": 0.1
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326279,
+    "actualColumn": 10,
+    "actualTime": "13:17",
+    "actualDate": "26.08.26",
+    "result": "TOP3"
   },
   {
     "id": "internal-326279-1787739927218",
@@ -18679,12 +18679,12 @@
       "hitRate": 0.25833333333333336,
       "top1Rate": 0.1
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326280,
+    "actualColumn": 9,
+    "actualTime": "13:32",
+    "actualDate": "26.08.26",
+    "result": "TOP3"
   },
   {
     "id": "internal-326280-1787740651508",
