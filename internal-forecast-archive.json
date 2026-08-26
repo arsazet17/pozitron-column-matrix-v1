@@ -20403,12 +20403,12 @@
       "hitRate": 0.275,
       "top1Rate": 0.1
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326288,
+    "actualColumn": 7,
+    "actualTime": "16:32",
+    "actualDate": "26.08.26",
+    "result": "TOP3"
   },
   {
     "id": "internal-326288-1787751434682",
