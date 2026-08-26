@@ -21715,12 +21715,12 @@
       "hitRate": 0.2916666666666667,
       "top1Rate": 0.1
     },
-    "settled": false,
-    "actualDraw": null,
-    "actualColumn": null,
-    "actualTime": "",
-    "actualDate": "",
-    "result": null
+    "settled": true,
+    "actualDraw": 326296,
+    "actualColumn": 7,
+    "actualTime": "19:32",
+    "actualDate": "26.08.26",
+    "result": "MISS"
   },
   {
     "id": "internal-326296-1787762435641",
