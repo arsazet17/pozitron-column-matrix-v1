@@ -109,11 +109,5 @@
   window.addEventListener('online', refreshOnWake);
 })();
 
-(() => {
-  if (document.querySelector('script[data-archive-result-icon-fix]')) return;
-  const s = document.createElement('script');
-  s.src = 'archive-result-icon-fix.js?v=3';
-  s.defer = true;
-  s.dataset.archiveResultIconFix = '1';
-  document.head.appendChild(s);
-})();
+// archive-result-icon-fix.js теперь подключается напрямую из index.html.
+// Его ?v= автоматически обновляет refresh-asset-versions.mjs.
