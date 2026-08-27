@@ -798,11 +798,8 @@
 
     let archive = loadArchive();
     settleArchive(archive, draws);
+    // INTERNAL on phone disabled: server/archive only.
 
-    // Внутренний алгоритм работает постоянно: на каждом новом официальном
-    // тираже автоматически фиксирует прогноз на следующий. При ошибке сети
-    // новый прогноз не создаём по старому локальному кэшу.
-    if (fresh) ensureInternalForecast(draws);
 
     archive = loadArchive();
     const latest = draws.at(-1);
