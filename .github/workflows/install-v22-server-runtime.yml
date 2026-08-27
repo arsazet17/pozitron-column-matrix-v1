@@ -1,0 +1,87 @@
+name: v2.2 · Install M5M-style server runtime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "server-runtime-direct.js"
+      - ".github/workflows/install-v22-server-runtime.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v22-install-server-runtime
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Получить актуальный main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Вставить server-runtime-direct.js перед ai-analyzer.js
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path("index.html")
+          s = p.read_text(encoding="utf-8")
+
+          tag = '<script src="server-runtime-direct.js?v=v22-m5m-server-live-20260827"></script>'
+
+          # Удаляем старую версию этой вставки, если workflow запускается повторно.
+          s = re.sub(
+              r'\s*<script src="server-runtime-direct\.js\?v=[^"]+"></script>',
+              '',
+              s
+          )
+
+          marker = re.search(
+              r'<script src="ai-analyzer\.js\?v=[^"]+"></script>',
+              s
+          )
+          if not marker:
+              raise SystemExit("ERROR: не найден ai-analyzer.js?v= в index.html")
+
+          s = s[:marker.start()] + tag + "\n" + s[marker.start():]
+          p.write_text(s, encoding="utf-8")
+
+      - name: Проверить, что серверный runtime подключён раньше ИИ
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -n "server-runtime-direct.js" index.html
+          grep -n "ai-analyzer.js" index.html
+
+          server_line="$(grep -n "server-runtime-direct.js" index.html | head -1 | cut -d: -f1)"
+          ai_line="$(grep -n "ai-analyzer.js" index.html | head -1 | cut -d: -f1)"
+
+          if [ "$server_line" -ge "$ai_line" ]; then
+            echo "::error::server-runtime-direct.js должен идти ДО ai-analyzer.js"
+            exit 1
+          fi
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- index.html; then
+            echo "Уже установлено"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add index.html
+          git commit -m "v2.2 · M5M-style server runtime"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
