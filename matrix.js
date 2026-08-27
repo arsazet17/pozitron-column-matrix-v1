@@ -521,8 +521,19 @@
     update();
   };
 
+
+  function ensureOfficialAiModule() {
+    if (document.querySelector('script[data-pozitron-ai]')) return;
+    const s = document.createElement('script');
+    s.src = `ai-analyzer.js?v=stoloto-200`;
+    s.defer = true;
+    s.dataset.pozitronAi = '1';
+    document.head.appendChild(s);
+  }
+
   load();
   render();
   setupAuto();
-setTimeout(update, 500);
+  ensureOfficialAiModule();
+  setTimeout(update, 500);
 })();

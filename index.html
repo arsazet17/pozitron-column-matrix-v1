@@ -7,7 +7,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.3.0</title>
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.1</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -119,7 +119,7 @@ button,input,select{font:inherit}
 <div class="app">
   <div class="top">
     <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-      <small>новое отдельное приложение · v2.3.0</small>
+      <small>новое отдельное приложение · v2.2.1</small>
     </div>
     <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
   </div>
@@ -243,10 +243,22 @@ button,input,select{font:inherit}
   </div>
 </div>
 
-<script src="matrix.js?v=v230-clean-core"></script>
-<script src="yulia-gap-fix.js?v=4cf3a513050e"></script>
-<script src="server-runtime-direct.js?v=v230-clean-core"></script>
-<script src="ai-analyzer.js?v=v230-clean-core"></script>
-<script src="history-result-column-fix.js?v=v230-clean-core"></script>
+<script src="matrix.js?v=restore-56b60d5"></script>
+<script src="yulia-gap-fix.js?v=restore-56b60d5"></script>
+<script src="server-runtime-direct.js?v=restore-56b60d5"></script>
+<script src="ai-analyzer.js?v=restore-56b60d5"></script>
+<script src="history-result-column-fix.js?v=restore-56b60d5"></script>
+<script id="restore-cache-cleanup">
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then(rs => rs.forEach(r => r.unregister()))
+    .catch(()=>{});
+}
+if ("caches" in window) {
+  caches.keys()
+    .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+    .catch(()=>{});
+}
+</script>
 </body>
 </html>
