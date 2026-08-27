@@ -1,0 +1,83 @@
+name: ROLLBACK · 27.08 11:40
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/rollback-27-08-1140.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Prepare rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin main
+          git reset --hard origin/main
+
+          TARGET="14f9421eb666c4430db4d7f20c727054ae652ce9"
+
+          # Сохраняем только актуальные данные и рабочий Pages deploy.
+          cp keno-history.json /tmp/keno-history.json
+          cp internal-forecast-archive.json /tmp/internal-forecast-archive.json
+          cp stoloto-status.json /tmp/stoloto-status.json
+
+          if [ -f .github/workflows/pages.yml ]; then
+            cp .github/workflows/pages.yml /tmp/pages.yml
+          fi
+
+          # Полностью возвращаем дерево репозитория к состоянию 27.08 11:40 МСК.
+          # HEAD при этом остаётся текущим: будет создан обычный новый rollback commit.
+          git read-tree --reset -u "$TARGET"
+
+          # Возвращаем свежие архивы, чтобы не потерять сегодняшние тиражи.
+          cp /tmp/keno-history.json keno-history.json
+          cp /tmp/internal-forecast-archive.json internal-forecast-archive.json
+          cp /tmp/stoloto-status.json stoloto-status.json
+
+          # GitHub Pages сейчас настроен на GitHub Actions.
+          # Сохраняем только pages.yml для публикации откатанного приложения.
+          if [ -f /tmp/pages.yml ]; then
+            mkdir -p .github/workflows
+            cp /tmp/pages.yml .github/workflows/pages.yml
+          fi
+
+      - name: Verify rollback target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          grep -n "новое отдельное приложение · v2.2" index.html
+
+          node --check matrix.js
+          node --check ai-analyzer.js
+
+          echo "Rollback target: 14f9421"
+          echo "Time: 27.08.2026 11:40 Moscow"
+
+      - name: Commit rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "ROLLBACK · приложение к 27.08 11:40 МСК"
+
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
