@@ -1,0 +1,66 @@
+name: v2.2.1 · FIX Pages conflict
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/fix-v221-pages-conflict.yml"
+
+permissions:
+  contents: read
+  pages: write
+  actions: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Переключить GitHub Pages на GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          echo "Switch Pages build_type -> workflow"
+
+          gh api \
+            --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${GITHUB_REPOSITORY}/pages" \
+            -f build_type=workflow
+
+      - name: Отменить зависшие старые Pages runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Отменяем только старый автоматически созданный Pages workflow,
+          # если он ещё висит in_progress/queued.
+          gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 30 \
+            --json databaseId,name,status \
+            --jq '.[] | select(.name=="pages build and deployment" and (.status=="in_progress" or .status=="queued")) | .databaseId' \
+          | while read -r run_id; do
+              [ -z "$run_id" ] && continue
+              echo "Cancel old Pages run $run_id"
+              gh run cancel "$run_id" --repo "$GITHUB_REPOSITORY" || true
+            done
+
+      - name: Запустить наш правильный Pages deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          echo "Dispatch Deploy Column Matrix Pages"
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY"
+
+      - name: Готово
+        run: |
+          echo "Pages source = GitHub Actions"
+          echo "Старый branch deployment отключён"
+          echo "Наш pages.yml запущен"
