@@ -1,0 +1,72 @@
+name: v2.2 · History result column
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "history-result-column-fix.js"
+      - ".github/workflows/install-v22-history-result.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v22-history-result-column
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Insert history result fix
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path("index.html")
+          s = p.read_text(encoding="utf-8")
+
+          tag = '<script src="history-result-column-fix.js?v=v22-result-st-20260827"></script>'
+
+          s = re.sub(
+              r'\s*<script src="history-result-column-fix\.js\?v=[^"]+"></script>',
+              '',
+              s
+          )
+
+          marker = re.search(r'</body>', s, re.I)
+          if not marker:
+              raise SystemExit("ERROR: </body> не найден")
+
+          s = s[:marker.start()] + tag + "\n" + s[marker.start():]
+          p.write_text(s, encoding="utf-8")
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- index.html; then
+            echo "Уже установлено"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add index.html
+          git commit -m "v2.2 · показывать вышедший столб в истории"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
