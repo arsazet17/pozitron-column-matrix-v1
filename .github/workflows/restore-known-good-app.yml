@@ -1,0 +1,109 @@
+name: RESTORE · known-good app
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/restore-known-good-app.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Restore known-good client from 56b60d5
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+          GOOD="56b60d51d3b0bd066f69ab8fab818320462c059b"
+
+          git checkout "$GOOD" -- \
+            index.html \
+            matrix.js \
+            yulia-gap-fix.js \
+            server-runtime-direct.js \
+            ai-analyzer.js \
+            history-result-column-fix.js \
+            manifest.webmanifest \
+            icon.svg
+
+          # Broken PWA files are not part of the known-good app.
+          rm -f sw.js
+          rm -rf icons
+
+      - name: Force fresh browser copy and clear old service worker
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p=Path("index.html")
+          s=p.read_text(encoding="utf-8")
+
+          # Keep the known-good logic; only force fresh asset URLs.
+          s=re.sub(r'<script src="matrix\.js\?v=[^"]+"></script>',
+                   '<script src="matrix.js?v=restore-56b60d5"></script>',s)
+          s=re.sub(r'<script src="yulia-gap-fix\.js\?v=[^"]+"></script>',
+                   '<script src="yulia-gap-fix.js?v=restore-56b60d5"></script>',s)
+          s=re.sub(r'<script src="server-runtime-direct\.js\?v=[^"]+"></script>',
+                   '<script src="server-runtime-direct.js?v=restore-56b60d5"></script>',s)
+          s=re.sub(r'<script src="ai-analyzer\.js\?v=[^"]+"></script>',
+                   '<script src="ai-analyzer.js?v=restore-56b60d5"></script>',s)
+          s=re.sub(r'<script src="history-result-column-fix\.js\?v=[^"]+"></script>',
+                   '<script src="history-result-column-fix.js?v=restore-56b60d5"></script>',s)
+
+          cleanup='''<script id="restore-cache-cleanup">
+          if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.getRegistrations()
+              .then(rs => rs.forEach(r => r.unregister()))
+              .catch(()=>{});
+          }
+          if ("caches" in window) {
+            caches.keys()
+              .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+              .catch(()=>{});
+          }
+          </script>'''
+
+          s=re.sub(r'\s*<script id="restore-cache-cleanup">.*?</script>','',s,flags=re.S)
+          s=s.replace('</body>',cleanup+'\n</body>')
+          p.write_text(s,encoding="utf-8")
+
+      - name: Syntax check known-good scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check matrix.js
+          node --check yulia-gap-fix.js
+          node --check server-runtime-direct.js
+          node --check ai-analyzer.js
+          node --check history-result-column-fix.js
+
+      - name: Commit restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Already restored"
+            exit 0
+          fi
+
+          git commit -m "RESTORE known-good app 56b60d5"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
