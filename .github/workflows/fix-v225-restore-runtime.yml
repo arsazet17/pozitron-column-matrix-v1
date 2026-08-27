@@ -1,0 +1,127 @@
+name: v2.2.5 · RESTORE RUNTIME FIX
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/fix-v225-restore-runtime.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Fix restored runtime only
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          # 1) Remove SECOND ai-analyzer.js loader from matrix.js.
+          p=Path("matrix.js")
+          s=p.read_text(encoding="utf-8")
+          s=re.sub(
+              r'\n\s*function ensureOfficialAiModule\(\)\s*\{.*?\n\s*\}\n',
+              '\n',
+              s,
+              flags=re.S
+          )
+          s=re.sub(r'\n\s*ensureOfficialAiModule\(\);\s*', '\n', s)
+          p.write_text(s,encoding="utf-8")
+
+          # 2) Put cache/service-worker cleanup BEFORE all app scripts.
+          p=Path("index.html")
+          s=p.read_text(encoding="utf-8")
+
+          s=re.sub(
+              r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+              '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.5</title>',
+              s
+          )
+          s=re.sub(
+              r'<small>новое отдельное приложение · v[^<]+</small>',
+              '<small>новое отдельное приложение · v2.2.5</small>',
+              s
+          )
+
+          # Remove old late cleanup.
+          s=re.sub(r'\s*<script id="restore-cache-cleanup">.*?</script>','',s,flags=re.S)
+
+          early='''<script id="early-runtime-cleanup">
+          (function(){
+            try {
+              if ("serviceWorker" in navigator) {
+                navigator.serviceWorker.getRegistrations()
+                  .then(rs => Promise.all(rs.map(r => r.unregister())))
+                  .catch(()=>{});
+              }
+              if ("caches" in window) {
+                caches.keys()
+                  .then(ks => Promise.all(ks.map(k => caches.delete(k))))
+                  .catch(()=>{});
+              }
+            } catch(e) {}
+          })();
+          </script>'''
+
+          # Insert before first external app script.
+          marker=re.search(r'<script src="matrix\.js\?v=[^"]+"></script>',s)
+          if not marker:
+              raise SystemExit("matrix.js script tag not found")
+          s=s[:marker.start()] + early + "\n" + s[marker.start():]
+
+          # Force fresh assets.
+          repls={
+            r'<script src="matrix\.js\?v=[^"]+"></script>':
+              '<script src="matrix.js?v=v225-runtime-fix"></script>',
+            r'<script src="yulia-gap-fix\.js\?v=[^"]+"></script>':
+              '<script src="yulia-gap-fix.js?v=v225-runtime-fix"></script>',
+            r'<script src="server-runtime-direct\.js\?v=[^"]+"></script>':
+              '<script src="server-runtime-direct.js?v=v225-runtime-fix"></script>',
+            r'<script src="ai-analyzer\.js\?v=[^"]+"></script>':
+              '<script src="ai-analyzer.js?v=v225-runtime-fix"></script>',
+            r'<script src="history-result-column-fix\.js\?v=[^"]+"></script>':
+              '<script src="history-result-column-fix.js?v=v225-runtime-fix"></script>'
+          }
+          for pat,repl in repls.items():
+              s=re.sub(pat,repl,s)
+
+          p.write_text(s,encoding="utf-8")
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check matrix.js
+          node --check yulia-gap-fix.js
+          node --check server-runtime-direct.js
+          node --check ai-analyzer.js
+          node --check history-result-column-fix.js
+
+          test "$(grep -c 'function ensureOfficialAiModule' matrix.js || true)" -eq 0
+          test "$(grep -c 'ai-analyzer.js?v=' index.html || true)" -eq 1
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add matrix.js index.html
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Матрица v2.2.5 · restore runtime fix"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
