@@ -1,0 +1,84 @@
+name: ROLLBACK 11-40 CODE ONLY
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/rollback-1140-code-only.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Restore application code from 11-40
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+          TARGET="14f9421eb666c4430db4d7f20c727054ae652ce9"
+
+          # Restore everything from 11:40 EXCEPT:
+          # .github/workflows (GitHub App cannot modify workflows),
+          # and current live data archives.
+          git diff --name-only "$TARGET" HEAD | while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              .github/workflows/*|keno-history.json|internal-forecast-archive.json|stoloto-status.json)
+                continue
+                ;;
+            esac
+
+            if git cat-file -e "$TARGET:$f" 2>/dev/null; then
+              mkdir -p "$(dirname "$f")"
+              git show "$TARGET:$f" > "$f"
+              git add "$f"
+            else
+              rm -rf "$f"
+              git add -A -- "$f" 2>/dev/null || true
+            fi
+          done
+
+      - name: Verify exact client rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -n "новое отдельное приложение · v2.2" index.html
+          node --check matrix.js
+          node --check ai-analyzer.js
+
+          # Core app files must match the 11:40 commit byte-for-byte.
+          for f in index.html matrix.js ai-analyzer.js manifest.webmanifest icon.svg; do
+            if git cat-file -e "14f9421eb666c4430db4d7f20c727054ae652ce9:$f" 2>/dev/null; then
+              git show "14f9421eb666c4430db4d7f20c727054ae652ce9:$f" | cmp - "$f"
+            fi
+          done
+
+      - name: Commit and push without workflow changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Absolute guard: never include workflow files in this commit.
+          git reset -- .github/workflows/ || true
+
+          if git diff --cached --quiet; then
+            echo "No application changes required"
+            exit 0
+          fi
+
+          git commit -m "ROLLBACK application code to 27.08 11:40 MSK"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
