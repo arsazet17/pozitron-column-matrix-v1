@@ -1,0 +1,96 @@
+name: v2.2.8 ACTIVE UI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/v228-active-ui.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Patch active UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+          node <<'NODE'
+          const fs = require('fs');
+
+          // matrix.js: remove the SECOND dynamic ai-analyzer loader.
+          let m = fs.readFileSync('matrix.js','utf8');
+          m = m.replace(/\n\s*function ensureOfficialAiModule\(\)\s*\{[\s\S]*?\n\s*\}\n/, '\n');
+          m = m.replace(/\n\s*ensureOfficialAiModule\(\);\s*/, '\n');
+          if (m.includes('ensureOfficialAiModule')) {
+            throw new Error('duplicate AI loader still present');
+          }
+          fs.writeFileSync('matrix.js', m);
+
+          // ai-analyzer.js: do not run the heavy INTERNAL 120-step backtest on the phone.
+          let a = fs.readFileSync('ai-analyzer.js','utf8');
+          const oldBlock = `    // Внутренний алгоритм работает постоянно: на каждом новом официальном
+              // тираже автоматически фиксирует прогноз на следующий. При ошибке сети
+              // новый прогноз не создаём по старому локальному кэшу.
+              if (fresh) ensureInternalForecast(draws);`;
+          const re = /\s*\/\/ Внутренний алгоритм работает постоянно:[\s\S]*?if \(fresh\) ensureInternalForecast\(draws\);/;
+          if (!re.test(a)) throw new Error('heavy INTERNAL block not found');
+          a = a.replace(re, `
+              // INTERNAL on phone disabled: server/archive only.
+          `);
+          if (a.includes('if (fresh) ensureInternalForecast(draws);')) {
+            throw new Error('heavy INTERNAL still enabled');
+          }
+          fs.writeFileSync('ai-analyzer.js', a);
+
+          // index.html: visible version + mandatory cache-bust.
+          let h = fs.readFileSync('index.html','utf8');
+          h = h.replace(/<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+<\/title>/,
+                        '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.8</title>');
+          h = h.replace(/<small>новое отдельное приложение · v[^<]+<\/small>/,
+                        '<small>новое отдельное приложение · v2.2.8</small>');
+          h = h.replace(/<script src="matrix\.js\?v=[^"]+"><\/script>/,
+                        '<script src="matrix.js?v=v228-active-ui"></script>');
+          h = h.replace(/<script src="ai-analyzer\.js\?v=[^"]+"><\/script>/,
+                        '<script src="ai-analyzer.js?v=v228-active-ui"></script>');
+          fs.writeFileSync('index.html', h);
+          NODE
+
+      - name: Verify JS
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check matrix.js
+          node --check ai-analyzer.js
+          grep -q "v2.2.8" index.html
+          test "$(grep -c 'ai-analyzer.js?v=' index.html)" -eq 1
+          ! grep -q "ensureOfficialAiModule" matrix.js
+          ! grep -q "if (fresh) ensureInternalForecast(draws);" ai-analyzer.js
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html matrix.js ai-analyzer.js
+
+          if git diff --cached --quiet; then
+            echo "Already fixed"
+            exit 0
+          fi
+
+          git commit -m "Матрица v2.2.8 ACTIVE UI"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
