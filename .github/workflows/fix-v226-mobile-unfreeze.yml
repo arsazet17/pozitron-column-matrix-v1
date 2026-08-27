@@ -1,0 +1,85 @@
+name: v2.2.6 · MOBILE UNFREEZE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/fix-v226-mobile-unfreeze.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Stop heavy INTERNAL calculation on phone
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p=Path("ai-analyzer.js")
+          s=p.read_text(encoding="utf-8")
+
+          old = """    // Внутренний алгоритм работает постоянно: на каждом новом официальном
+    // тираже автоматически фиксирует прогноз на следующий. При ошибке сети
+    // новый прогноз не создаём по старому локальному кэшу.
+    if (fresh) ensureInternalForecast(draws);
+"""
+
+          new = """    // INTERNAL теперь создаётся только на GitHub сервере.
+    // Телефон не пересчитывает тяжёлый 120-шаговый backtest при каждом открытии.
+    // Здесь только читаем готовый server archive, который синхронизирует
+    // server-runtime-direct.js.
+"""
+
+          if old not in s:
+              raise SystemExit("Target block not found in ai-analyzer.js")
+          s=s.replace(old,new)
+          p.write_text(s,encoding="utf-8")
+
+          p=Path("index.html")
+          s=p.read_text(encoding="utf-8")
+          s=re.sub(r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+                   '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.6</title>',s)
+          s=re.sub(r'<small>новое отдельное приложение · v[^<]+</small>',
+                   '<small>новое отдельное приложение · v2.2.6</small>',s)
+          s=re.sub(r'<script src="ai-analyzer\.js\?v=[^"]+"></script>',
+                   '<script src="ai-analyzer.js?v=v226-mobile-unfreeze"></script>',s)
+          p.write_text(s,encoding="utf-8")
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check ai-analyzer.js
+          node --check matrix.js
+          grep -n "v2.2.6" index.html
+          if grep -q "if (fresh) ensureInternalForecast(draws);" ai-analyzer.js; then
+            echo "::error::heavy mobile INTERNAL still enabled"
+            exit 1
+          fi
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ai-analyzer.js index.html
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Матрица v2.2.6 · mobile unfreeze"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
