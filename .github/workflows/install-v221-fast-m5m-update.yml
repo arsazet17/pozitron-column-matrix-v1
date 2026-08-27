@@ -1,0 +1,71 @@
+name: v2.2.1 · Install FAST M5M update
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/install-v221-fast-m5m-update.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v221-install-fast-m5m-update
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Поднять версию приложения до v2.2.1
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path("index.html")
+          s = p.read_text(encoding="utf-8")
+
+          s = re.sub(
+              r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+              '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.1</title>',
+              s
+          )
+
+          s = re.sub(
+              r'<small>новое отдельное приложение · v[^<]+</small>',
+              '<small>новое отдельное приложение · v2.2.1</small>',
+              s
+          )
+
+          p.write_text(s, encoding="utf-8")
+
+      - name: Commit version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- index.html; then
+            echo "Версия уже v2.2.1"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add index.html
+          git commit -m "Матрица столбов v2.2.1 · FAST M5M update"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

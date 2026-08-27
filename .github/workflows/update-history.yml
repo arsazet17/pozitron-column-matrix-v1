@@ -22,13 +22,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
 
       - name: Синхронизировать с актуальным main
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin main
-          git checkout -B main origin/main
           git reset --hard origin/main
 
       - name: Node.js 20
@@ -65,10 +65,12 @@ jobs:
       - name: Внутренний ИИ · постоянный прогноз и архив
         run: node internal-forecast-runner.mjs
 
-      - name: Обновить версии JS без кэша
-        run: node refresh-asset-versions.mjs
-
-      - name: Сохранить историю, INTERNAL и версии приложения
+      # ВАЖНО — как в M5M:
+      # тиражный AUTO не трогает index.html и версии JS.
+      # Поэтому обновление данных НЕ запускает пересборку Pages.
+      # Телефон читает keno-history.json и internal-forecast-archive.json
+      # напрямую из raw.githubusercontent.com/main с cache:no-store.
+      - name: Сохранить LIVE данные сразу
         shell: bash
         run: |
           set -euo pipefail
@@ -77,13 +79,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           commit_if_needed() {
-            if git diff --quiet -- keno-history.json internal-forecast-archive.json index.html; then
-              echo "Новых изменений нет"
+            if git diff --quiet -- keno-history.json internal-forecast-archive.json; then
+              echo "Новых LIVE-данных нет"
               return 1
             fi
 
-            git add keno-history.json internal-forecast-archive.json index.html
-            git commit -m "Матрица столбов · история + INTERNAL ИИ + cache bust"
+            git add keno-history.json internal-forecast-archive.json
+            git commit -m "Матрица v2.2.1 · LIVE Stoloto runtime"
             return 0
           }
 
@@ -95,7 +97,7 @@ jobs:
             echo "Попытка push ${attempt}/3"
 
             if git push origin HEAD:main; then
-              echo "Push PASS"
+              echo "LIVE Push PASS"
               exit 0
             fi
 
@@ -114,10 +116,9 @@ jobs:
             fi
 
             node internal-forecast-runner.mjs
-            node refresh-asset-versions.mjs
 
             if ! commit_if_needed; then
-              echo "Другой запуск уже сохранил эти данные — PASS"
+              echo "Другой запуск уже сохранил LIVE-данные — PASS"
               exit 0
             fi
           done
