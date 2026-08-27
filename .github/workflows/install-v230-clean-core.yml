@@ -1,0 +1,112 @@
+name: v2.3.0 · CLEAN CORE INSTALL
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/install-v230-clean-core.yml"
+      - "internal-forecast-runner.mjs"
+      - ".github/workflows/update-history.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v230-clean-core-install
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Set v2.3.0 and clean old one-time patch workflows
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p=Path("index.html")
+          s=p.read_text(encoding="utf-8")
+
+          s=re.sub(
+            r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+            '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.3.0</title>',
+            s
+          )
+          s=re.sub(
+            r'<small>новое отдельное приложение · v[^<]+</small>',
+            '<small>новое отдельное приложение · v2.3.0</small>',
+            s
+          )
+
+          # Active client files get explicit stable version marks once.
+          replacements = {
+            r'<script src="matrix\.js\?v=[^"]+"></script>':
+              '<script src="matrix.js?v=v230-clean-core"></script>',
+            r'<script src="server-runtime-direct\.js\?v=[^"]+"></script>':
+              '<script src="server-runtime-direct.js?v=v230-clean-core"></script>',
+            r'<script src="ai-analyzer\.js\?v=[^"]+"></script>':
+              '<script src="ai-analyzer.js?v=v230-clean-core"></script>',
+            r'<script src="history-result-column-fix\.js\?v=[^"]+"></script>':
+              '<script src="history-result-column-fix.js?v=v230-clean-core"></script>'
+          }
+          for pat, repl in replacements.items():
+            s=re.sub(pat,repl,s)
+
+          # Remove temporary PWA cleanup block. PWA service worker is no longer registered.
+          s=re.sub(r'\s*<script id="pwa-emergency-cleanup">.*?</script>','',s,flags=re.S)
+
+          p.write_text(s,encoding="utf-8")
+
+          obsolete = [
+            ".github/workflows/install-v22-history-result.yml",
+            ".github/workflows/install-v22-server-runtime.yml",
+            ".github/workflows/install-v221-fast-m5m-update.yml",
+            ".github/workflows/fix-v221-pages-conflict.yml",
+            ".github/workflows/recover-v223.yml",
+            ".github/workflows/fix-v224-app-hang.yml",
+            ".github/workflows/install-v222-pwa.yml"
+          ]
+          for name in obsolete:
+            q=Path(name)
+            if q.exists():
+              q.unlink()
+
+      - name: Syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check internal-forecast-runner.mjs
+          node --check matrix.js
+          node --check ai-analyzer.js
+          node --check server-runtime-direct.js
+          node --check history-result-column-fix.js
+
+      - name: Commit clean core
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Clean core already installed"
+            exit 0
+          fi
+
+          git commit -m "Матрица v2.3.0 · clean core"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

@@ -15,110 +15,104 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
-      - name: Получить файлы репозитория
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
 
-      - name: Синхронизировать с актуальным main
-        shell: bash
+      - name: Fresh main
         run: |
-          set -euo pipefail
           git fetch origin main
           git reset --hard origin/main
 
-      - name: Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Установить Playwright
+      - name: Cache Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-column-matrix-playwright-1
+
+      - name: Dependencies
         run: |
           npm init -y
           npm install playwright
           npx playwright install --with-deps chromium
 
-      - name: Столото · безопасно обновить историю
-        shell: bash
+      - name: Read Stoloto until latest due draw is caught
         env:
           STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
           STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
+        shell: bash
         run: |
           set -u
+          success=0
 
-          cp keno-history.json /tmp/keno-history.before-stoloto.json
+          for attempt in 1 2 3 4 5 6; do
+            echo "Column Matrix Stoloto attempt $attempt/6"
 
-          if node stoloto-column-matrix-update.mjs; then
-            echo "СТОЛОТО: PASS"
-          else
-            echo "СТОЛОТО: НЕТ ОТВЕТА"
-            echo "Оставляю последний проверенный keno-history.json"
-            cp /tmp/keno-history.before-stoloto.json keno-history.json
+            cp keno-history.json /tmp/keno-history.before.json
+
+            if timeout --signal=TERM --kill-after=15s 180s node stoloto-column-matrix-update.mjs; then
+              success=1
+              break
+            fi
+
+            echo "Reader failed; restore verified history."
+            cp /tmp/keno-history.before.json keno-history.json
+
+            if [ "$attempt" -lt 6 ]; then
+              sleep 25
+            fi
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "::error::Stoloto could not be updated after 6 attempts."
+            exit 1
           fi
 
-          exit 0
-
-      - name: Внутренний ИИ · постоянный прогноз и архив
-        run: node internal-forecast-runner.mjs
-
-      # ВАЖНО — как в M5M:
-      # тиражный AUTO не трогает index.html и версии JS.
-      # Поэтому обновление данных НЕ запускает пересборку Pages.
-      # Телефон читает keno-history.json и internal-forecast-archive.json
-      # напрямую из raw.githubusercontent.com/main с cache:no-store.
-      - name: Сохранить LIVE данные сразу
+      - name: Commit DRAW immediately
         shell: bash
         run: |
           set -euo pipefail
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          commit_if_needed() {
-            if git diff --quiet -- keno-history.json internal-forecast-archive.json; then
-              echo "Новых LIVE-данных нет"
-              return 1
-            fi
+          if git diff --quiet -- keno-history.json stoloto-status.json; then
+            echo "No new draw data"
+          else
+            git add keno-history.json stoloto-status.json
+            git commit -m "Матрица v2.3 · LIVE draw"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+          fi
 
-            git add keno-history.json internal-forecast-archive.json
-            git commit -m "Матрица v2.2.1 · LIVE Stoloto runtime"
-            return 0
-          }
+      - name: INTERNAL direct Node engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 90s node internal-forecast-runner.mjs
 
-          if ! commit_if_needed; then
+      - name: Commit INTERNAL separately
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- internal-forecast-archive.json; then
+            echo "No INTERNAL changes"
             exit 0
           fi
 
-          for attempt in 1 2 3; do
-            echo "Попытка push ${attempt}/3"
-
-            if git push origin HEAD:main; then
-              echo "LIVE Push PASS"
-              exit 0
-            fi
-
-            if [ "$attempt" -eq 3 ]; then
-              echo "ERROR: push не прошёл после 3 попыток"
-              exit 1
-            fi
-
-            git fetch origin main
-            git reset --hard origin/main
-
-            cp keno-history.json /tmp/keno-history.before-retry.json
-
-            if ! node stoloto-column-matrix-update.mjs; then
-              cp /tmp/keno-history.before-retry.json keno-history.json
-            fi
-
-            node internal-forecast-runner.mjs
-
-            if ! commit_if_needed; then
-              echo "Другой запуск уже сохранил LIVE-данные — PASS"
-              exit 0
-            fi
-          done
+          git add internal-forecast-archive.json
+          git commit -m "Матрица v2.3 · INTERNAL forecast"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
