@@ -1,0 +1,57 @@
+name: v2.2.3 · RECOVER APP
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/recover-v223.yml"
+permissions:
+  contents: write
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - run: |
+          git fetch origin main
+          git reset --hard origin/main
+      - name: Remove broken PWA and set v2.2.3
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p=Path("index.html")
+          s=p.read_text(encoding="utf-8")
+          s=re.sub(r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+                   '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.3</title>',s)
+          s=re.sub(r'<small>новое отдельное приложение · v[^<]+</small>',
+                   '<small>новое отдельное приложение · v2.2.3</small>',s)
+          s=re.sub(r'\s*<script id="column-pwa-register">.*?</script>','',s,flags=re.S)
+          # Emergency cleanup: unregister any service worker previously installed
+          cleanup='''<script id="pwa-emergency-cleanup">
+          if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(()=>{});
+          }
+          if ("caches" in window) {
+            caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith("column-matrix-")).map(k => caches.delete(k)))).catch(()=>{});
+          }
+          </script>'''
+          s=re.sub(r'\s*<script id="pwa-emergency-cleanup">.*?</script>','',s,flags=re.S)
+          s=s.replace('</body>',cleanup+'\n</body>')
+          p.write_text(s,encoding="utf-8")
+      - name: Disable broken PWA workflow and service worker file
+        run: |
+          rm -f .github/workflows/install-v222-pwa.yml
+          rm -f sw.js
+      - name: Commit recovery
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Матрица v2.2.3 · recover from broken PWA"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
