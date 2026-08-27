@@ -12,38 +12,54 @@ const assets = [
   'archive-result-icon-fix.js'
 ];
 
+async function exists(path) {
+  try {
+    await fs.access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function fileHash(path) {
   const data = await fs.readFile(path);
-  return crypto.createHash('sha256').update(data).digest('hex').slice(0, 12);
+  return crypto
+    .createHash('sha256')
+    .update(data)
+    .digest('hex')
+    .slice(0, 12);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 let html = await fs.readFile(INDEX, 'utf8');
 let changed = false;
 
 for (const asset of assets) {
-  try {
-    const hash = await fileHash(asset);
+  if (!(await exists(asset))) continue;
 
-    const escaped = asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(<script\\s+src=["']${escaped})(?:\\?v=[^"']*)?(["'][^>]*><\\/script>)`, 'g');
+  const version = await fileHash(asset);
+  const name = escapeRegExp(asset);
 
-    const next = html.replace(re, `$1?v=${hash}$2`);
+  const scriptRe = new RegExp(
+    `(<script\\b[^>]*\\bsrc=["']${name})(?:\\?v=[^"']*)?(["'][^>]*><\\/script>)`,
+    'gi'
+  );
 
-    if (next !== html) {
-      html = next;
-      changed = true;
-      console.log(`${asset} -> ?v=${hash}`);
-    } else {
-      console.log(`${asset}: script tag not found in index.html`);
-    }
-  } catch (e) {
-    console.log(`${asset}: skipped (${e.message})`);
+  const before = html;
+  html = html.replace(scriptRe, `$1?v=${version}$2`);
+
+  if (html !== before) {
+    changed = true;
+    console.log(`${asset} -> ?v=${version}`);
   }
 }
 
 if (changed) {
   await fs.writeFile(INDEX, html, 'utf8');
-  console.log('index.html cache versions updated');
+  console.log('PASS: index.html versions updated');
 } else {
-  console.log('index.html already up to date');
+  console.log('PASS: versions already current');
 }
