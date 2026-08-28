@@ -1,0 +1,60 @@
+name: GROUPS ONLY Yulia cells
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/groups-only.yml"
+      - "groups-only.cjs"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Apply groups only
+        shell: bash
+        run: |
+          set -euo pipefail
+          node groups-only.cjs
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check groups-only.cjs
+          node --check matrix.js
+          grep -q 'class="yulia-group-mark"' matrix.js
+          grep -q '.yulia-group-mark{' index.html
+          grep -q 'matrix.js?v=groups-only-2215' index.html
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add matrix.js index.html groups-only.cjs
+          if git diff --cached --quiet; then
+            echo "Already installed"
+            exit 0
+          fi
+          git commit -m "Матрица · только номера групп в Горизонтали Юли"
+          git fetch origin main
+          git rebase origin/main || true
+          git push origin HEAD:main
