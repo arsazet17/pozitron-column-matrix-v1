@@ -1,0 +1,102 @@
+name: v2.2.11 HISTORY RESULT COLUMN
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/v2211-history-result-column.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Show actual column in history summary
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p=Path("ai-analyzer.js")
+          s=p.read_text(encoding="utf-8")
+
+          old="""        const anyHit=records.some(r=>r.settled && (r.result==='TOP1'||r.result==='TOP3'));
+        const allSettled=records.every(r=>r.settled);
+        const icon=anyHit?'🔥':(allSettled?'—':'—');"""
+
+          new="""        const anyHit=records.some(r=>r.settled && (r.result==='TOP1'||r.result==='TOP3'));
+        const allSettled=records.every(r=>r.settled);
+        const resultText = allSettled && actual
+          ? (anyHit ? `🔥 СТ${actual}` : `❌ СТ${actual}`)
+          : '—';"""
+
+          if old not in s:
+              raise SystemExit("history summary block not found")
+          s=s.replace(old,new,1)
+
+          old2='<span class="ai-hresult">${icon}</span><span class="ai-harrow">▼</span>'
+          new2='<span class="ai-hresult">${resultText}</span><span class="ai-harrow">▼</span>'
+
+          if old2 not in s:
+              raise SystemExit("history result cell not found")
+          s=s.replace(old2,new2,1)
+
+          p.write_text(s,encoding="utf-8")
+
+          p=Path("index.html")
+          h=p.read_text(encoding="utf-8")
+          h=re.sub(
+              r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+              '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.11</title>',
+              h
+          )
+          h=re.sub(
+              r'<small>новое отдельное приложение · v[^<]+</small>',
+              '<small>новое отдельное приложение · v2.2.11</small>',
+              h
+          )
+          h=re.sub(
+              r'<script src="ai-analyzer\.js\?v=[^"]+"></script>',
+              '<script src="ai-analyzer.js?v=v2211-history-result-column"></script>',
+              h
+          )
+          p.write_text(h,encoding="utf-8")
+
+      - name: Verify
+        run: |
+          set -euo pipefail
+          node --check ai-analyzer.js
+          grep -q '🔥 СТ${actual}' ai-analyzer.js
+          grep -q '❌ СТ${actual}' ai-analyzer.js
+          grep -q 'v2.2.11' index.html
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add ai-analyzer.js index.html
+
+          if git diff --cached --quiet; then
+            echo "Already installed"
+            exit 0
+          fi
+
+          git commit -m "Матрица v2.2.11 · столб результата в истории"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
