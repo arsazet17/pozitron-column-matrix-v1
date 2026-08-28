@@ -1,0 +1,66 @@
+name: Install v2.2.12 server internal
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/install-v2212.yml"
+      - "install-v2212.mjs"
+      - "internal-forecast-runner.mjs"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Apply v2.2.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          node install-v2212.mjs
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check internal-forecast-runner.mjs
+          node --check ai-analyzer.js
+          grep -q "fetchServerInternalArchive" ai-analyzer.js
+          grep -q '🔥 СТ${actual}' ai-analyzer.js
+          grep -q '❌ СТ${actual}' ai-analyzer.js
+          grep -q "v2.2.12" index.html
+          if grep -q "if (fresh) ensureInternalForecast(draws);" ai-analyzer.js; then
+            echo "Phone INTERNAL is still enabled"
+            exit 1
+          fi
+
+      - name: Commit application changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ai-analyzer.js index.html internal-forecast-runner.mjs install-v2212.mjs
+          if git diff --cached --quiet; then
+            echo "Already installed"
+            exit 0
+          fi
+          git commit -m "Матрица v2.2.12 server INTERNAL and history result"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
