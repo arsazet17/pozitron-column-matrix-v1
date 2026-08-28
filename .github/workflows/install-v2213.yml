@@ -1,0 +1,81 @@
+name: Install v2.2.13 fixed CJS
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/install-v2213.yml"
+      - "install-v2213.cjs"
+      - "internal-forecast-runner.mjs"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Apply v2.2.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          node install-v2213.cjs
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check install-v2213.cjs
+          node --check internal-forecast-runner.mjs
+          node --check ai-analyzer.js
+          grep -q "fetchServerInternalArchive" ai-analyzer.js
+          grep -q '🔥 СТ${actual}' ai-analyzer.js
+          grep -q '❌ СТ${actual}' ai-analyzer.js
+          if grep -q "if (fresh) ensureInternalForecast(draws);" ai-analyzer.js; then
+            echo "Phone INTERNAL still enabled"
+            exit 1
+          fi
+
+      - name: Set visible version 2.2.13
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p=Path("index.html")
+          h=p.read_text(encoding="utf-8")
+          h=re.sub(r'<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v[^<]+</title>',
+                   '<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.13</title>', h)
+          h=re.sub(r'<small>новое отдельное приложение · v[^<]+</small>',
+                   '<small>новое отдельное приложение · v2.2.13</small>', h)
+          h=re.sub(r'<script src="ai-analyzer\.js\?v=[^"]+"></script>',
+                   '<script src="ai-analyzer.js?v=v2213-server-history"></script>', h)
+          p.write_text(h,encoding="utf-8")
+
+      - name: Commit application changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ai-analyzer.js index.html internal-forecast-runner.mjs install-v2213.cjs
+          if git diff --cached --quiet; then
+            echo "Already installed"
+            exit 0
+          fi
+          git commit -m "Матрица v2.2.13 fixed server internal"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
