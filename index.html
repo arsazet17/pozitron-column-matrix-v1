@@ -7,7 +7,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.14</title>
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.15</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -132,7 +132,7 @@ button,input,select{font:inherit}
 <div class="app">
   <div class="top">
     <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-      <small>новое отдельное приложение · v2.2.14</small>
+      <small>новое отдельное приложение · v2.2.15</small>
     </div>
     <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
   </div>
@@ -256,7 +256,7 @@ button,input,select{font:inherit}
   </div>
 </div>
 
-<script src="matrix.js?v=groups-only-2215"></script>
+<script src="matrix.js?v=v2215-yulia"></script>
 <script src="yulia-gap-fix.js?v=v2214"></script>
 <script src="ai-analyzer.js?v=v2214"></script>
 
@@ -265,7 +265,7 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register(
-        './sw.js?v=matrix-v2214',
+        './sw.js?v=matrix-v2215',
         { updateViaCache: 'none' }
       );
       await reg.update();
