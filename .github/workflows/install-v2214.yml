@@ -1,0 +1,83 @@
+name: Install v2.2.14 M5M update
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/install-v2214.yml"
+      - "install-v2214.cjs"
+      - "sw.js"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Apply v2.2.14
+        shell: bash
+        run: |
+          set -euo pipefail
+          node install-v2214.cjs
+
+      - name: Verify before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check install-v2214.cjs
+          node --check ai-analyzer.js
+          node --check internal-forecast-runner.mjs
+          node --check sw.js
+
+          grep -q "v2.2.14" index.html
+          grep -q "matrix.js?v=v2214" index.html
+          grep -q "ai-analyzer.js?v=v2214" index.html
+          grep -q "updateViaCache: 'none'" index.html
+          grep -q "fetchServerInternalArchive" ai-analyzer.js
+          grep -q '🔥 СТ${actual}' ai-analyzer.js
+          grep -q '❌ СТ${actual}' ai-analyzer.js
+          grep -q "matrix-v2214-20260828" sw.js
+          grep -q '"start_url": "./?app=v2214"' manifest.webmanifest
+
+          if grep -q "if (fresh) ensureInternalForecast(draws);" ai-analyzer.js; then
+            echo "Phone INTERNAL is still enabled"
+            exit 1
+          fi
+
+          if grep -q "internalLearner: internalSnapshotForOpenAI(draws)" ai-analyzer.js; then
+            echo "External AI still receives INTERNAL"
+            exit 1
+          fi
+
+      - name: Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add index.html ai-analyzer.js manifest.webmanifest sw.js install-v2214.cjs
+
+          if git diff --cached --quiet; then
+            echo "Already installed"
+            exit 0
+          fi
+
+          git commit -m "Матрица v2.2.14 · M5M style update + server INTERNAL"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
