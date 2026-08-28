@@ -3,6 +3,7 @@
 (() => {
   const STORAGE_KEY = 'pozitron_column_matrix_draws_v1';
   const HISTORY_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
+  const INTERNAL_ARCHIVE_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/internal-forecast-archive.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
   const VERSION = 'HYBRID-6.1-AUTO-INTERNAL';
@@ -88,6 +89,37 @@
     const draws = dedupeDraws(walkHistory(payload));
     if (!draws.length) throw new Error('В полном архиве не найдены официальные столбцы');
     return draws;
+  }
+
+
+  async function fetchServerInternalArchive() {
+    try {
+      const u = `${INTERNAL_ARCHIVE_URL}?ts=${Date.now()}`;
+      const r = await fetch(u, {
+        method: 'GET',
+        cache: 'no-store',
+        mode: 'cors',
+        credentials: 'omit'
+      });
+      if (!r.ok) return;
+
+      const server = await r.json();
+      if (!Array.isArray(server)) return;
+
+      const local = loadArchive();
+      const map = new Map();
+
+      [...local, ...server].forEach(rec => {
+        const key = `${rec?.provider || 'openai'}:${rec?.baseDraw}:${rec?.targetDraw}`;
+        map.set(key, rec);
+      });
+
+      saveArchive(
+        [...map.values()].sort(
+          (a,b) => Number(a?.targetDraw || 0) - Number(b?.targetDraw || 0)
+        )
+      );
+    } catch (_) {}
   }
 
   function loadArchive() {
@@ -317,13 +349,11 @@
       stats250: columnStats(draws, 250),
       stats100: columnStats(draws, 100),
       patternsAll: patternSummary(draws),
-      internalLearner: internalSnapshotForOpenAI(draws),
       request: [
         'Перед тобой полный доступный официальный архив столбцов, а не локальный кэш телефона.',
         'Проведи сравнение всей истории с последними 500/250/100 и особенно последними 80 тиражами.',
         'Обязательно учитывай: переходы столбец→столбец, повторы, возвраты через 1/2/3 тиража, серии, продолжение шага и обратный шаг, малые и большие зеркала, текущие и типичные разрывы, чет/нечет, изменения частот по окнам, а также группы/числа последних тиражей.',
         'Не выбирай столбцы только по простой частоте. Сопоставь несколько независимых сигналов и объясни, какие сигналы сошлись.',
-        'В payload есть internalLearner — независимый внутренний пакетный алгоритм. Используй его как дополнительную информацию, но НЕ копируй автоматически: внешний прогноз должен оставаться самостоятельным.',
         'КЕНО случайно: не обещай гарантии и не изображай обучение на будущих результатах.',
         'Ответ дай СТРОГО без Markdown и без звездочек в формате:',
         'PICKS: 4,2,9',
@@ -710,13 +740,15 @@
         const actualDate=records.find(r=>r.settled)?.actualDate||ref.targetDate;
         const anyHit=records.some(r=>r.settled && (r.result==='TOP1'||r.result==='TOP3'));
         const allSettled=records.every(r=>r.settled);
-        const icon=anyHit?'🔥':(allSettled?'—':'—');
+        const resultText = allSettled && actual
+          ? (anyHit ? `🔥 СТ${actual}` : `❌ СТ${actual}`)
+          : '—';
         return `<details class="ai-history-row">
           <summary class="ai-history-summary">
             <span class="ai-hdraw">№${ref.targetDraw}</span>
             <span class="ai-hdate">${escapeHtml(shortDate(actualDate))}</span>
             <span class="ai-htime">${escapeHtml(actualTime?actualTime.slice(0,5):(ref.targetTime||'—'))}</span>
-            <span class="ai-hresult">${icon}</span><span class="ai-harrow">▼</span>
+            <span class="ai-hresult">${resultText}</span><span class="ai-harrow">▼</span>
           </summary>
           <div class="ai-history-body">
             ${records.map(rec=>{
@@ -796,6 +828,7 @@
       $('aiStatus').textContent = 'ЛОКАЛЬНЫЙ РЕЗЕРВ';
     }
 
+    await fetchServerInternalArchive();
     let archive = loadArchive();
     settleArchive(archive, draws);
     // INTERNAL on phone disabled: server/archive only.
@@ -1039,7 +1072,7 @@
         confidence: parsed.confidence,
         summary: parsed.summary,
         rawAnalysis: parsed.raw,
-        usedInternalLearning: true,
+        usedInternalLearning: false,
         settled: false,
         actualDraw: null,
         actualColumn: null,

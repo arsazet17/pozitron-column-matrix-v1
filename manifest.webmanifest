@@ -1,7 +1,7 @@
 {
   "name": "ПОЗИТРОН · МАТРИЦА СТОЛБОВ",
   "short_name": "Матрица столбов",
-  "start_url": "./",
+  "start_url": "./?app=v2214",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
