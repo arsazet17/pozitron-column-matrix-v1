@@ -1,0 +1,53 @@
+name: Install v2.2.15 Yulia groups
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/install-v2215-yulia.yml"
+      - "install-v2215-yulia.cjs"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fresh main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Apply
+        run: node install-v2215-yulia.cjs
+
+      - name: Verify
+        run: |
+          set -euo pipefail
+          node --check matrix.js
+          node --check sw.js
+          grep -q 'class="yulia-group-mark"' matrix.js
+          grep -q 'groupDetails(drawIndex, w).group' matrix.js
+          grep -q 'v2.2.15' index.html
+          grep -q 'matrix.js?v=v2215-yulia' index.html
+          grep -q "matrix-v2215" sw.js
+          grep -q '"start_url": "./?app=v2215"' manifest.webmanifest
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add matrix.js index.html sw.js manifest.webmanifest install-v2215-yulia.cjs
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Матрица v2.2.15 · группы Горизонтали Юли"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
