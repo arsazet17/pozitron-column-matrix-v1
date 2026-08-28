@@ -107,6 +107,19 @@ button,input,select{font:inherit}
 .yulia-cell.y-orange{background:#ffb51b;color:#261700}
 .yulia-cell.y-light{background:#c8eaf7;color:#0d2430}
 .yulia-cell:active{transform:scale(.96)}
+.yulia-cell{position:relative}
+.yulia-main-value{display:inline-block}
+.yulia-group-mark{
+  position:absolute;
+  right:3px;
+  bottom:1px;
+  font-size:9px;
+  line-height:1;
+  font-weight:900;
+  opacity:.78;
+  color:currentColor;
+  pointer-events:none;
+}
 .yulia-legend{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
 .yulia-legend .lg{border-radius:8px;padding:5px 7px;font-size:11px;font-weight:800;border:1px solid rgba(255,255,255,.16)}
 .yulia-legend .y-blue{background:#12a7df;color:#07111f}
@@ -243,7 +256,7 @@ button,input,select{font:inherit}
   </div>
 </div>
 
-<script src="matrix.js?v=v2214"></script>
+<script src="matrix.js?v=groups-only-2215"></script>
 <script src="yulia-gap-fix.js?v=v2214"></script>
 <script src="ai-analyzer.js?v=v2214"></script>
 

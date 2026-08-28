@@ -389,10 +389,12 @@
         if (!w) return '<td></td>';
 
         const cls = yuliaColorClass(data, dateKey, time, timeIndex, w);
+        const drawIndex = draws.findIndex(x => Number(x.draw) === Number(d.draw));
+        const group = drawIndex >= 0 ? groupDetails(drawIndex, w).group : '—';
         return `<td class="yulia-cell ${cls}"
           data-win-draw="${d.draw}"
           data-win-col="${w}"
-          title="${time} · официальный Столото ст${w} · нажмите для группы">${w}</td>`;
+          title="${time} · официальный Столото ст${w} · нажмите для группы"><span class="yulia-main-value">${w}</span><span class="yulia-group-mark">(${group})</span></td>`;
       }).join('');
 
       return `<tr>
