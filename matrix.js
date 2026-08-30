@@ -479,14 +479,14 @@
   function setupAuto() {
     if (timer) clearInterval(timer);
     timer = null;
-    const ms = Number(localStorage.getItem(INTERVAL_KEY) || 300000);
+    const ms = Number(localStorage.getItem(INTERVAL_KEY) || 60000);
     if (ms) timer = setInterval(update, ms);
   }
 
   function openSettings() {
     $('settingsPanel').classList.toggle('show');
     $('sourceInput').value = sourceUrl();
-    $('intervalSelect').value = localStorage.getItem(INTERVAL_KEY) || '300000';
+    $('intervalSelect').value = localStorage.getItem(INTERVAL_KEY) || '60000';
     if ($('settingsPanel').classList.contains('show')) {
       $('settingsPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }

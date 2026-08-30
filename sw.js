@@ -1,4 +1,4 @@
-const CACHE='matrix-v2215';
+const CACHE='matrix-m5m-refresh-d948c82514ee';
 
 const ASSETS=[
   './',
@@ -68,4 +68,8 @@ self.addEventListener('fetch', event => {
         .catch(() => caches.match(event.request))
     );
   }
+});
+
+self.addEventListener('message', event => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });

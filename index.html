@@ -7,7 +7,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.15</title>
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.2.16</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -132,7 +132,7 @@ button,input,select{font:inherit}
 <div class="app">
   <div class="top">
     <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-      <small>новое отдельное приложение · v2.2.15</small>
+      <small>новое отдельное приложение · v2.2.16</small>
     </div>
     <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
   </div>
@@ -256,16 +256,16 @@ button,input,select{font:inherit}
   </div>
 </div>
 
-<script src="matrix.js?v=7fd8feb10aad"></script>
+<script src="matrix.js?v=70e198427dd0"></script>
 <script src="yulia-gap-fix.js?v=4cf3a513050e"></script>
 <script src="ai-analyzer.js?v=47880f2bdf10"></script>
 
-<script id="matrix-sw-register">
+<script id="matrix-sw-controllerchange-v2216">\n(() => {\n  if (!('serviceWorker' in navigator)) return;\n  let reloading = false;\n  navigator.serviceWorker.addEventListener('controllerchange', () => {\n    if (reloading) return;\n    reloading = true;\n    location.reload();\n  });\n  navigator.serviceWorker.ready.then(reg => {\n    if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');\n    reg.update().catch(() => {});\n  }).catch(() => {});\n})();\n</script>\n<script id="matrix-sw-register">
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register(
-        './sw.js?v=d948c82514ee',
+        './sw.js?v=32be5ad1a631',
         { updateViaCache: 'none' }
       );
       await reg.update();
