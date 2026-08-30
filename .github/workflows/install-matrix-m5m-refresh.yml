@@ -14,10 +14,8 @@ jobs:
   install:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
-      - name: Получить свежий main
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: main
@@ -27,21 +25,18 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
 
-      - name: Node.js 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Установить механизм M5M refresh
+      - name: Установить M5M refresh
         run: node install-matrix-m5m-refresh.cjs
 
       - name: Пересчитать хэши JS
         run: node refresh-asset-versions.mjs
 
       - name: Проверка
-        shell: bash
         run: |
-          set -euo pipefail
           grep -q "v2.2.16" index.html
           grep -q "60000" matrix.js
           grep -q "matrix-sw-controllerchange-v2216" index.html
@@ -52,7 +47,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           if git diff --quiet -- index.html matrix.js sw.js refresh-asset-versions.mjs; then
             echo "Изменений нет"
             exit 0
@@ -69,12 +63,10 @@ jobs:
               echo "INSTALL PASS"
               exit 0
             fi
-
             if [ "$attempt" -eq 3 ]; then
               echo "INSTALL FAIL"
               exit 1
             fi
-
             git fetch origin main
             git rebase origin/main
           done
