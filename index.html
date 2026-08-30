@@ -256,16 +256,16 @@ button,input,select{font:inherit}
   </div>
 </div>
 
-<script src="matrix.js?v=v2215-yulia"></script>
-<script src="yulia-gap-fix.js?v=v2214"></script>
-<script src="ai-analyzer.js?v=v2214"></script>
+<script src="matrix.js?v=7fd8feb10aad"></script>
+<script src="yulia-gap-fix.js?v=4cf3a513050e"></script>
+<script src="ai-analyzer.js?v=47880f2bdf10"></script>
 
 <script id="matrix-sw-register">
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register(
-        './sw.js?v=matrix-v2215',
+        './sw.js?v=d948c82514ee',
         { updateViaCache: 'none' }
       );
       await reg.update();
