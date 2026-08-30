@@ -5,61 +5,47 @@ import crypto from 'node:crypto';
 
 const INDEX = 'index.html';
 
-const assets = [
-  'matrix.js',
-  'yulia-gap-fix.js',
-  'ai-analyzer.js',
-  'archive-result-icon-fix.js'
-];
-
 async function exists(path) {
-  try {
-    await fs.access(path);
-    return true;
-  } catch {
-    return false;
-  }
+  try { await fs.access(path); return true; } catch { return false; }
 }
-
 async function fileHash(path) {
   const data = await fs.readFile(path);
-  return crypto
-    .createHash('sha256')
-    .update(data)
-    .digest('hex')
-    .slice(0, 12);
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return crypto.createHash('sha256').update(data).digest('hex').slice(0, 12);
 }
 
 let html = await fs.readFile(INDEX, 'utf8');
-let changed = false;
+const beforeAll = html;
+const changes = [];
 
-for (const asset of assets) {
-  if (!(await exists(asset))) continue;
+const scriptRe = /(<script\b[^>]*\bsrc=["'])(?!https?:\/\/|\/\/)([^"'?]+\.js)(?:\?v=[^"']*)?(["'][^>]*><\/script>)/gi;
+const matches = [...html.matchAll(scriptRe)];
 
-  const version = await fileHash(asset);
-  const name = escapeRegExp(asset);
+for (const m of matches) {
+  const file = m[2].replace(/^\.\//, '');
+  if (!(await exists(file))) continue;
 
-  const scriptRe = new RegExp(
-    `(<script\\b[^>]*\\bsrc=["']${name})(?:\\?v=[^"']*)?(["'][^>]*><\\/script>)`,
-    'gi'
-  );
+  const h = await fileHash(file);
+  const exact = m[0];
+  const next = m[1] + m[2] + '?v=' + h + m[3];
 
-  const before = html;
-  html = html.replace(scriptRe, `$1?v=${version}$2`);
-
-  if (html !== before) {
-    changed = true;
-    console.log(`${asset} -> ?v=${version}`);
+  if (exact !== next) {
+    html = html.replace(exact, next);
+    changes.push(file + ' -> ' + h);
   }
 }
 
-if (changed) {
+if (await exists('sw.js')) {
+  const h = await fileHash('sw.js');
+  const swRe = /(['"]\.\/sw\.js)(?:\?v=[^'"]*)?(['"])/g;
+  const old = html;
+  html = html.replace(swRe, '$1?v=' + h + '$2');
+  if (html !== old) changes.push('sw.js(register) -> ' + h);
+}
+
+if (html !== beforeAll) {
   await fs.writeFile(INDEX, html, 'utf8');
-  console.log('PASS: index.html versions updated');
+  console.log('PASS: index.html cache versions updated');
+  for (const x of changes) console.log('  ' + x);
 } else {
-  console.log('PASS: versions already current');
+  console.log('PASS: JS hashes unchanged; index.html untouched');
 }
