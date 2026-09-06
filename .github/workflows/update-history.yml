@@ -55,7 +55,6 @@ jobs:
 
           for attempt in 1 2 3 4 5 6; do
             echo "Column Matrix Stoloto attempt $attempt/6"
-
             cp keno-history.json /tmp/keno-history.before.json
 
             if timeout --signal=TERM --kill-after=15s 180s node stoloto-column-matrix-update.mjs; then
@@ -65,10 +64,7 @@ jobs:
 
             echo "Reader failed; restore verified history."
             cp /tmp/keno-history.before.json keno-history.json
-
-            if [ "$attempt" -lt 6 ]; then
-              sleep 25
-            fi
+            if [ "$attempt" -lt 6 ]; then sleep 25; fi
           done
 
           if [ "$success" -ne 1 ]; then
@@ -87,7 +83,7 @@ jobs:
             echo "No new draw data"
           else
             git add keno-history.json stoloto-status.json
-            git commit -m "Матрица v2.3 · LIVE draw"
+            git commit -m "Матрица · LIVE draw"
             git fetch origin main
             git rebase origin/main
             git push origin HEAD:main
@@ -108,11 +104,34 @@ jobs:
 
           if git diff --quiet -- internal-forecast-archive.json; then
             echo "No INTERNAL changes"
+          else
+            git add internal-forecast-archive.json
+            git commit -m "Матрица · INTERNAL forecast"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+          fi
+
+      - name: COMBO AI 2.0.1 · train and freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 120s node combo-runner.mjs
+
+      - name: Commit COMBO archive and learning state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- combo-forecast-archive.json combo-model-state.json; then
+            echo "No COMBO changes"
             exit 0
           fi
 
-          git add internal-forecast-archive.json
-          git commit -m "Матрица v2.3 · INTERNAL forecast"
+          git add combo-forecast-archive.json combo-model-state.json
+          git commit -m "Матрица · COMBO AI 2.0.1 learn + frozen"
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
