@@ -1,8 +1,80 @@
 {
-  "version": "COMBO-AI-2.0.0",
+  "version": "COMBO-AI-2.0.1",
   "experience": 0,
   "lastSettledDraw": 0,
-  "updatedAt": null,
-  "weights": {},
-  "clusterRecord": {}
+  "updatedAt": "2026-09-06T18:37:44.333Z",
+  "weights": {
+    "3": {
+      "marker": 0.2,
+      "anchor": 0.18,
+      "add": 0.08,
+      "repeat": 0.06,
+      "group": 0.05,
+      "road": 0.08,
+      "pattern": 0.06,
+      "parity": 0.04,
+      "position": 0.08,
+      "cooccur": 0.17
+    },
+    "4": {
+      "marker": 0.08,
+      "anchor": 0.22,
+      "add": 0.2,
+      "repeat": 0.08,
+      "group": 0.08,
+      "road": 0.05,
+      "pattern": 0.05,
+      "parity": 0.06,
+      "position": 0.12,
+      "cooccur": 0.06
+    },
+    "5": {
+      "marker": 0.08000000000000002,
+      "anchor": 0.060000000000000005,
+      "add": 0.08000000000000002,
+      "repeat": 0.060000000000000005,
+      "group": 0.26000000000000006,
+      "road": 0.18000000000000002,
+      "pattern": 0.08000000000000002,
+      "parity": 0.08000000000000002,
+      "position": 0.04000000000000001,
+      "cooccur": 0.08000000000000002
+    },
+    "6": {
+      "marker": 0.05,
+      "anchor": 0.1,
+      "add": 0.08,
+      "repeat": 0.18,
+      "group": 0.06,
+      "road": 0.06,
+      "pattern": 0.2,
+      "parity": 0.1,
+      "position": 0.1,
+      "cooccur": 0.07
+    },
+    "7": {
+      "marker": 0.12000000000000001,
+      "anchor": 0.10000000000000002,
+      "add": 0.10000000000000002,
+      "repeat": 0.08000000000000002,
+      "group": 0.10000000000000002,
+      "road": 0.10000000000000002,
+      "pattern": 0.10000000000000002,
+      "parity": 0.08000000000000002,
+      "position": 0.08000000000000002,
+      "cooccur": 0.14000000000000004
+    }
+  },
+  "clusterRecord": {
+    "marker": 0,
+    "anchor": 0,
+    "add": 0,
+    "repeat": 0,
+    "group": 0,
+    "road": 0,
+    "pattern": 0,
+    "parity": 0,
+    "position": 0,
+    "cooccur": 0
+  }
 }
