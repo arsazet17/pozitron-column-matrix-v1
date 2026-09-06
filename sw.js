@@ -1,4 +1,4 @@
-const CACHE='matrix-v232-road-markers-external-1';
+const CACHE='matrix-v240-combo-ai-1';
 
 const ASSETS=[
   './',
@@ -6,6 +6,7 @@ const ASSETS=[
   './matrix.js',
   './yulia-gap-fix.js',
   './ai-analyzer.js',
+  './combo-engine.js',
   './marker-base.json',
   './manifest.webmanifest',
   './icon.svg'
