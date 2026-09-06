@@ -6,11 +6,14 @@
   const INTERNAL_ARCHIVE_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/internal-forecast-archive.json';
   const ARCHIVE_KEY = 'pozitron_openai_forecast_archive_v2';
   const WORKER_URL = 'https://pozitron-gigachat-api.arsazet-17-go.workers.dev';
-  const VERSION = 'HYBRID-6.1-AUTO-INTERNAL';
+  const VERSION = 'HYBRID-7.1-ROAD-MARKERS-EXTERNAL';
+  const MARKER_URL = './marker-base.json';
+  const COMBO_ARCHIVE_KEY = 'pozitron_combo_forecast_archive_v1'; // зарезервировано для следующего этапа: прогноз комбинаций
   const MATRIX_REFRESH_MS = 60000;
 
   const $ = id => document.getElementById(id);
   let internalAutoBusy = false;
+  let markerBaseCache = null;
 
 
   function forceMainMatrixRefresh() {
@@ -89,6 +92,159 @@
     const draws = dedupeDraws(walkHistory(payload));
     if (!draws.length) throw new Error('В полном архиве не найдены официальные столбцы');
     return draws;
+  }
+
+  async function fetchMarkerBase() {
+    if (markerBaseCache) return markerBaseCache;
+    const response = await fetch(`${MARKER_URL}?ts=${Date.now()}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`База маркеров: HTTP ${response.status}`);
+    const base = await response.json();
+    if (!base?.singleDelta || !base?.pairDelta || !base?.group) {
+      throw new Error('База маркеров повреждена или имеет неизвестный формат');
+    }
+    markerBaseCache = base;
+    return base;
+  }
+
+  function markerStateVector(balls) {
+    const counts = Array(10).fill(0);
+    for (const n of balls || []) {
+      const x = Number(n);
+      if (Number.isInteger(x) && x >= 1 && x <= 80) counts[(x - 1) % 10]++;
+    }
+    return counts.map(x => Math.min(4, x));
+  }
+
+  const MARKER_PAIRS = (() => {
+    const out = [];
+    for (let a = 0; a < 80; a++) for (let b = a + 1; b < 80; b++) out.push([a, b]);
+    return out;
+  })();
+  const MARKER_PAIR_INDEX = (() => {
+    const idx = Array.from({length: 80}, () => Array(80).fill(-1));
+    MARKER_PAIRS.forEach(([a,b], i) => { idx[a][b] = i; idx[b][a] = i; });
+    return idx;
+  })();
+
+  function markerZscores(values) {
+    const mean = values.reduce((s,x) => s + x, 0) / (values.length || 1);
+    const sd = Math.sqrt(values.reduce((s,x) => s + (x - mean) ** 2, 0) / (values.length || 1)) || 1;
+    return values.map(x => (x - mean) / sd);
+  }
+
+  function markerRoadKey(seq, H, kind) {
+    const s = seq.slice(-H);
+    const last = s.at(-1) ?? 2, prev = s.at(-2) ?? 2;
+    if (kind === 'short') return s.slice(-4).join(',');
+    const counts = [0,0,0,0,0];
+    for (const v of s) counts[v]++;
+    const age = target => {
+      for (let i = 0; i < s.length; i++) if (s[s.length - 1 - i] === target) return i;
+      return H;
+    };
+    const bin = (x, edges) => { let i = 0; while (i < edges.length && x >= edges[i]) i++; return i; };
+    const d = s.slice(-6); let up = 0, down = 0;
+    for (let i=1;i<d.length;i++) { if (d[i] > d[i-1]) up++; else if (d[i] < d[i-1]) down++; }
+    if (kind === 'mid') return [last,prev,bin(counts[4],[2,4,7]),bin(counts[0],[1,3,5]),bin(age(4),[2,5,10,20]),up-down].join(',');
+    return [last,bin(counts[4],[4,7,11,16]),bin(counts[0],[2,5,9,14]),bin(age(4),[3,8,16,30,50]),bin(age(0),[3,8,16,30,50]),Math.sign(up-down)].join(',');
+  }
+
+  function markerRoadScores(base, draws) {
+    const withBalls = draws.filter(d => Array.isArray(d.balls) && d.balls.length === 20);
+    if (withBalls.length < 66) return null;
+    const paths = Array.from({length: 10}, () => []);
+    for (const d of withBalls) {
+      const sv = markerStateVector(d.balls);
+      for (let c=0;c<10;c++) paths[c].push(sv[c]);
+    }
+    const scores = Array(10).fill(0), details = Array.from({length: 10}, () => ({}));
+    for (let c=0;c<10;c++) {
+      for (const kind of ['short','mid','long']) {
+        const g = base.group?.[kind]; if (!g) continue;
+        const key = markerRoadKey(paths[c], Number(g.h), kind);
+        const [n,h] = g.pool?.[key] || [0,0];
+        const [ns,hs] = g.specific?.[c]?.[key] || [0,0];
+        const pp = n ? (h+10)/(n+100) : .1;
+        const ps = ns ? (hs+5)/(ns+50) : .1;
+        const rel = Math.min(1,n/500), rels = Math.min(1,ns/120);
+        const p = .1 + rel*(pp-.1)*.65 + rels*(ps-.1)*.35;
+        const w = kind === 'short' ? 1.2 : (kind === 'mid' ? .9 : .7);
+        scores[c] += w*(p-.1);
+        details[c][kind] = {p,n,ns,key};
+      }
+    }
+    return {scores, details, paths};
+  }
+
+  function markerNumericScores(base, currentBalls) {
+    const scale = Number(base.scale) || 100000;
+    const ids = (currentBalls || []).map(n => Number(n)-1).filter(n => n >= 0 && n < 80);
+    if (ids.length !== 20) return null;
+    const target = Array(80).fill(0);
+    const evidence = Array.from({length:80}, () => ({single:[], pair:[]}));
+    for (let y=0;y<80;y++) {
+      const singles = ids.map(x => ({x, d:(base.singleDelta?.[x]?.[y] || 0)/scale})).sort((a,b)=>a.d-b.d);
+      let score = singles.slice(-5).reduce((a,b)=>a+b.d,0)/5 + .35*(singles.slice(0,3).reduce((a,b)=>a+b.d,0)/3);
+      const pvals = [];
+      for (let i=0;i<ids.length;i++) for (let j=i+1;j<ids.length;j++) {
+        const pi = MARKER_PAIR_INDEX[ids[i]][ids[j]];
+        if (pi >= 0) pvals.push({a:ids[i], b:ids[j], d:(base.pairDelta?.[pi]?.[y] || 0)/scale, support:Number(base.pairSupport?.[pi] || 0)});
+      }
+      pvals.sort((a,b)=>a.d-b.d);
+      score += 1.6*(pvals.slice(-8).reduce((a,b)=>a+b.d,0)/8) + .25*(pvals.slice(0,4).reduce((a,b)=>a+b.d,0)/4);
+      target[y] = score;
+      evidence[y].single = singles.slice(-4).reverse().map(v => ({marker:v.x+1, delta:v.d}));
+      evidence[y].pair = pvals.slice(-5).reverse().map(v => ({marker:[v.a+1,v.b+1], delta:v.d, support:v.support}));
+    }
+    const columns = Array(10).fill(0);
+    for (let c=0;c<10;c++) {
+      const vals=[]; for (let y=c;y<80;y+=10) vals.push(target[y]);
+      vals.sort((a,b)=>a-b);
+      columns[c]=vals.slice(-4).reduce((a,b)=>a+b,0)/4 + .3*(vals.reduce((a,b)=>a+b,0)/vals.length);
+    }
+    return {scores:columns, target, evidence};
+  }
+
+  function externalMarkerContext(base, draws) {
+    const latest = draws.at(-1);
+    const numeric = markerNumericScores(base, latest?.balls || []);
+    const road = markerRoadScores(base, draws);
+    if (!numeric || !road) return null;
+    const zn = markerZscores(numeric.scores), zr = markerZscores(road.scores);
+    const numberOrder = [...Array(10).keys()].sort((a,b)=>zn[b]-zn[a]||a-b);
+    const roadOrder = [...Array(10).keys()].sort((a,b)=>zr[b]-zr[a]||a-b);
+    const topNumbers = [...Array(80).keys()].sort((a,b)=>numeric.target[b]-numeric.target[a]||a-b).slice(0,16).map(y => ({
+      number:y+1,
+      column:(y%10)+1,
+      score:Number(numeric.target[y].toFixed(5)),
+      singles:numeric.evidence[y].single,
+      pairs:numeric.evidence[y].pair
+    }));
+    const roads = [...Array(10).keys()].map(c => ({
+      column:c+1,
+      groupNow:road.paths[c].at(-1),
+      roadZ:Number(zr[c].toFixed(3)),
+      short:Number(((road.details[c].short?.p ?? .1)*100).toFixed(2)),
+      mid:Number(((road.details[c].mid?.p ?? .1)*100).toFixed(2)),
+      long:Number(((road.details[c].long?.p ?? .1)*100).toFixed(2)),
+      shortKey:road.details[c].short?.key || '',
+      midKey:road.details[c].mid?.key || '',
+      longKey:road.details[c].long?.key || ''
+    })).sort((a,b)=>b.roadZ-a.roadZ||a.column-b.column);
+    return {
+      markerBaseVersion:base.version,
+      markerBaseThrough:base.trainedThroughDraw,
+      validation:base.validation,
+      currentBalls:latest.balls,
+      numberColumnRanking:numberOrder.map(c=>c+1),
+      roadColumnRanking:roadOrder.map(c=>c+1),
+      topPredictedNumbers:topNumbers,
+      roads,
+      reservedFutureComboModule:{
+        status:'not_enabled_yet',
+        purpose:'Следующий этап: отдельная кнопка прогноз комбинаций; использовать topPredictedNumbers/маркерные голоса, хранить отдельный frozen-архив комбинаций.'
+      }
+    };
   }
 
 
@@ -316,8 +472,15 @@
     };
   }
 
-  function buildPayload(draws, target) {
+  async function buildPayload(draws, target) {
     const latest = draws.at(-1);
+    let markerContext = null;
+    try {
+      const markerBase = await fetchMarkerBase();
+      markerContext = externalMarkerContext(markerBase, draws);
+    } catch (error) {
+      markerContext = { error: String(error?.message || error) };
+    }
     const compactWholeArchive = draws.map(d => `${d.draw}:${d.column}`).join(',');
     const lastFull = draws.slice(-80).map(d => ({
       draw: d.draw,
@@ -349,14 +512,18 @@
       stats250: columnStats(draws, 250),
       stats100: columnStats(draws, 100),
       patternsAll: patternSummary(draws),
+      unifiedMarkerContext: markerContext,
       request: [
         'Перед тобой полный доступный официальный архив столбцов, а не локальный кэш телефона.',
         'Проведи сравнение всей истории с последними 500/250/100 и особенно последними 80 тиражами.',
-        'Обязательно учитывай: переходы столбец→столбец, повторы, возвраты через 1/2/3 тиража, серии, продолжение шага и обратный шаг, малые и большие зеркала, текущие и типичные разрывы, чет/нечет, изменения частот по окнам, а также группы/числа последних тиражей.',
+        'Обязательно используй unifiedMarkerContext: это та же единая база маркеров, что использует внутренний HYBRID-7. В ней есть число→следующее число, пара→следующее число и 10 независимых дорожек столбов по группам 0/1/2/3/4+ на короткой/средней/длинной дистанции.',
+        'Не копируй внутренний рейтинг механически: внешний ИИ должен дать самостоятельный TOP-3, но обязан разобрать активные маркеры будущих чисел, их сборку по столбам и дорожки групп. Если слои расходятся — явно учти это как ослабление.',
+        'Обязательно учитывай также: переходы столбец→столбец, повторы, возвраты через 1/2/3 тиража, серии, продолжение шага и обратный шаг, малые и большие зеркала, текущие и типичные разрывы, чет/нечет и изменения частот по окнам.',
         'Не выбирай столбцы только по простой частоте. Сопоставь несколько независимых сигналов и объясни, какие сигналы сошлись.',
         'КЕНО случайно: не обещай гарантии и не изображай обучение на будущих результатах.',
         'Ответ дай СТРОГО без Markdown и без звездочек в формате:',
         'PICKS: 4,2,9',
+        'RESERVES: 7,1',
         'CONFIDENCE: низкий',
         '4|кратко: какие 2-4 сигнала поддерживают столбец',
         '2|кратко: какие 2-4 сигнала поддерживают столбец',
@@ -375,6 +542,7 @@
     const lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
 
     let picks = [];
+    let reserves = [];
     let confidence = 'низкий';
     let summary = '';
     const reasons = {};
@@ -385,6 +553,11 @@
         .map(Number)
         .filter(n => n >= 1 && n <= 10)
         .slice(0, 3);
+    }
+
+    const reservesLine = lines.find(x => /^RESERVES\s*:/i.test(x));
+    if (reservesLine) {
+      reserves = (reservesLine.match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= 10 && !picks.includes(n)).slice(0, 2);
     }
 
     const confLine = lines.find(x => /^CONFIDENCE\s*:/i.test(x));
@@ -409,12 +582,16 @@
 
     if (!summary) {
       summary = lines
-        .filter(x => !/^PICKS\s*:/i.test(x) && !/^CONFIDENCE\s*:/i.test(x) && !/^([1-9]|10)\s*\|/.test(x))
+        .filter(x => !/^PICKS\s*:/i.test(x) && !/^RESERVES\s*:/i.test(x) && !/^CONFIDENCE\s*:/i.test(x) && !/^([1-9]|10)\s*\|/.test(x))
         .join(' ')
         .slice(0, 420);
     }
 
-    return { picks, reasons, confidence, summary, raw: text };
+    if (reserves.length < 2) {
+      const fallback = [1,2,3,4,5,6,7,8,9,10].filter(n => !picks.includes(n) && !reserves.includes(n));
+      reserves = [...reserves, ...fallback].slice(0,2);
+    }
+    return { picks, reserves, reasons, confidence, summary, raw: text };
   }
 
   function settleArchive(archive, draws) {
@@ -431,7 +608,8 @@
         if (rec.actualDate !== (actualDraw.date || '')) { rec.actualDate = actualDraw.date || ''; changed = true; }
 
         const pos = Array.isArray(rec.picks) ? rec.picks.indexOf(actualDraw.column) : -1;
-        const result = pos === 0 ? 'TOP1' : (pos > 0 ? 'TOP3' : 'MISS');
+        const rpos = Array.isArray(rec.reserves) ? rec.reserves.indexOf(actualDraw.column) : -1;
+        const result = pos === 0 ? 'TOP1' : (pos > 0 ? 'TOP3' : (rpos >= 0 ? 'RESERVE' : 'MISS'));
         if (!rec.settled) { rec.settled = true; changed = true; }
         if (rec.result !== result) { rec.result = result; changed = true; }
       }
@@ -671,6 +849,7 @@
   function resultBadge(rec) {
     if (!rec.settled) return '<span class="ai-badge ai-wait">⏳ ЖДЁМ</span>';
     if (rec.result === 'TOP1') return '<span class="ai-badge ai-hit">✅ ТОП-1</span>';
+    if (rec.result === 'RESERVE') return '<span class="ai-badge ai-hit">🛟 РЕЗЕРВ</span>';
     if (rec.result === 'TOP3') return '<span class="ai-badge ai-hit">✅ ТОП-3</span>';
     return '<span class="ai-badge ai-miss">❌ МИМО</span>';
   }
@@ -689,13 +868,17 @@
       return;
     }
 
-    $('aiPicks').innerHTML = rec.picks.map((col, i) => `
+    const mainHtml = rec.picks.map((col, i) => `
       <div class="ai-pick rank-${i + 1}">
         <div class="ai-rank">ТОП-${i + 1}</div>
         <div class="ai-col">СТ${col}</div>
         <div class="ai-reason">${escapeHtml(rec.reasons?.[col] || 'совокупный статистический сигнал')}</div>
       </div>
     `).join('');
+    const reserveHtml = Array.isArray(rec.reserves) && rec.reserves.length
+      ? `<div class="ai-reserve-wrap"><div class="ai-reserve-title">РЕЗЕРВ</div><div class="ai-reserves">${rec.reserves.map((col,i)=>`<div class="ai-reserve"><small>Р${i+1}</small><b>СТ${col}</b><span>${escapeHtml(rec.reasons?.[col] || 'сильный резервный маркер')}</span></div>`).join('')}</div></div>`
+      : '';
+    $('aiPicks').innerHTML = mainHtml + reserveHtml;
 
     $('aiConfidence').textContent = `${providerName(rec)} · ${String(rec.confidence || 'низкий').toUpperCase()}`;
     $('aiSummary').textContent = rec.summary || 'Прогноз сохранён.';
@@ -713,6 +896,7 @@
 
   function archiveResultIcon(rec) {
     if (!rec.settled) return '<span title="ждём результат">—</span>';
+    if (rec.result === 'RESERVE') return '<span title="попадание в резерв">🛟</span>';
     return rec.result === 'TOP1' || rec.result === 'TOP3'
       ? '<span title="попадание в TOP-3">🔥</span>'
       : '<span title="мимо">—</span>';
@@ -738,10 +922,10 @@
         const actual=records.find(r=>r.settled)?.actualColumn;
         const actualTime=records.find(r=>r.settled)?.actualTime||'';
         const actualDate=records.find(r=>r.settled)?.actualDate||ref.targetDate;
-        const anyHit=records.some(r=>r.settled && (r.result==='TOP1'||r.result==='TOP3'));
+        const anyHit=records.some(r=>r.settled && (r.result==='TOP1'||r.result==='TOP3'||r.result==='RESERVE'));
         const allSettled=records.every(r=>r.settled);
         const resultText = allSettled && actual
-          ? (anyHit ? `🔥 СТ${actual}` : `❌ СТ${actual}`)
+          ? (records.some(r=>r.result==='RESERVE') ? `🛟 СТ${actual}` : (anyHit ? `🔥 СТ${actual}` : `❌ СТ${actual}`))
           : '—';
         return `<details class="ai-history-row">
           <summary class="ai-history-summary">
@@ -753,11 +937,12 @@
           <div class="ai-history-body">
             ${records.map(rec=>{
               const hit=rec.settled&&(rec.result==='TOP1'||rec.result==='TOP3');
+              const reserveHit=rec.settled&&rec.result==='RESERVE';
               const label=providerName(rec);
               return `<div class="ai-provider-block ${hit?'provider-hit':''}">
-                <div class="ai-provider-title"><b>${label}</b><span>${hit?'🔥 ПОПАЛ':(rec.settled?'МИМО':'ЖДЁМ')}</span></div>
-                <div class="ai-history-picks">${rec.picks.map((x,i)=>`<div class="ai-history-pick hp${i+1} ${hit&&x===rec.actualColumn?'actual-hit':''}"><small>TOP-${i+1}</small><b>СТ${x}</b></div>`).join('')}</div>
-                ${rec.settled?`<div class="ai-history-fact">ВЫШЕЛ: <strong class="${hit?'actual-green':''}">СТ${rec.actualColumn}</strong> ${hit?'<span class="ok">✅🔥</span>':'<span class="miss">❌ МИМО</span>'}</div>`:'<div class="ai-history-fact muted">Результат ещё не появился.</div>'}
+                <div class="ai-provider-title"><b>${label}</b><span>${hit?'🔥 ПОПАЛ':(reserveHit?'🛟 РЕЗЕРВ':(rec.settled?'МИМО':'ЖДЁМ'))}</span></div>
+                <div class="ai-history-picks">${rec.picks.map((x,i)=>`<div class="ai-history-pick hp${i+1} ${hit&&x===rec.actualColumn?'actual-hit':''}"><small>TOP-${i+1}</small><b>СТ${x}</b></div>`).join('')}</div>${Array.isArray(rec.reserves)&&rec.reserves.length?`<div class="ai-history-reserves">${rec.reserves.map((x,i)=>`<span class="${reserveHit&&x===rec.actualColumn?'actual-hit':''}">Р${i+1}: <b>СТ${x}</b></span>`).join('')}</div>`:''}
+                ${rec.settled?`<div class="ai-history-fact">ВЫШЕЛ: <strong class="${hit||reserveHit?'actual-green':''}">СТ${rec.actualColumn}</strong> ${hit?'<span class="ok">✅🔥</span>':(reserveHit?'<span class="ok">🛟 РЕЗЕРВ</span>':'<span class="miss">❌ МИМО</span>')}</div>`:'<div class="ai-history-fact muted">Результат ещё не появился.</div>'}
                 ${rec.summary?`<div class="ai-history-note">${escapeHtml(rec.summary)}</div>`:''}
               </div>`;
             }).join('')}
@@ -876,6 +1061,12 @@
       .ai-rank{font-size:11px;font-weight:1000;color:#dbe8f7}
       .ai-col{font-size:29px;font-weight:1000;color:#fff;margin:4px 0;text-shadow:0 1px 8px rgba(0,0,0,.4)}
       .ai-reason{font-size:11px;line-height:1.35;color:#e7eef7}
+      .ai-reserve-wrap{grid-column:1/-1;margin-top:2px;border:1px solid #5b6470;background:#101926;border-radius:13px;padding:10px}
+      .ai-reserve-title{font-size:10px;font-weight:1000;color:#b6c1cf;letter-spacing:.08em;margin-bottom:7px}
+      .ai-reserves{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+      .ai-reserve{display:grid;grid-template-columns:35px 58px 1fr;gap:6px;align-items:center;border:1px solid #566474;border-radius:10px;padding:8px;background:#182231}
+      .ai-reserve small{font-weight:1000;color:#aeb9c7}.ai-reserve b{font-size:18px;color:#fff}.ai-reserve span{font-size:10px;color:#bdc9d8;line-height:1.3}
+      .ai-history-reserves{display:flex;gap:7px;margin-top:7px}.ai-history-reserves span{border:1px solid #536273;border-radius:8px;padding:5px 8px;color:#c7d1dc;background:#111e2b;font-size:10px}.ai-history-reserves .actual-hit{color:#6ee7a0}
       .ai-summary-box{margin-top:10px;border:1px solid #355273;background:#0b1728;border-radius:12px;padding:11px}
       .ai-summary-title{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:12px;color:#9babc0;margin-bottom:6px}
       .ai-confidence{border:1px solid #415d78;border-radius:999px;padding:4px 7px;color:#ffd34f;font-weight:950}
@@ -929,6 +1120,7 @@
         .viewtab{font-size:12px;padding:8px 4px}
         .ai-picks{grid-template-columns:1fr}
         .ai-pick{display:grid;grid-template-columns:64px 70px 1fr;align-items:center;text-align:left;gap:6px}
+        .ai-reserves{grid-template-columns:1fr}
         .ai-col{font-size:25px;margin:0}
       }
     `;
@@ -1047,7 +1239,7 @@
       const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload(draws, target))
+        body: JSON.stringify(await buildPayload(draws, target))
       });
 
       const data = await response.json().catch(() => ({}));
@@ -1068,6 +1260,7 @@
       officialSchedule: CURRENT_SCHEDULE,
       scheduleSource: 'current official KENO 4M schedule',
         picks: parsed.picks,
+        reserves: parsed.reserves,
         reasons: parsed.reasons,
         confidence: parsed.confidence,
         summary: parsed.summary,

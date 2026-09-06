@@ -1,4 +1,4 @@
-const CACHE='matrix-m5m-refresh-d948c82514ee';
+const CACHE='matrix-v231-road-markers-external-1';
 
 const ASSETS=[
   './',
@@ -6,6 +6,7 @@ const ASSETS=[
   './matrix.js',
   './yulia-gap-fix.js',
   './ai-analyzer.js',
+  './marker-base.json',
   './manifest.webmanifest',
   './icon.svg'
 ];
