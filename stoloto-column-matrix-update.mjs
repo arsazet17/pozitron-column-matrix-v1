@@ -218,67 +218,18 @@ async function login(page) {
   await page.waitForTimeout(2500);
 }
 
-async function expandArchive(page, targetRows = 150) {
-  let lastCount = 0;
-  let stableRounds = 0;
+const TAIL_SIZE = 10;
+const PAGE_READ_ATTEMPTS = 3;
 
-  for (let round = 0; round < 20; round += 1) {
-    const currentCount = await page.locator('tr').evaluateAll(list =>
-      list.filter(el => /№\s*\d{4,}/.test(el.innerText || '')).length
-    );
-
-    if (currentCount >= targetRows) break;
-
-    if (currentCount === lastCount) stableRounds += 1;
-    else stableRounds = 0;
-    lastCount = currentCount;
-
-    const moreButton = page.getByRole('button', {
-      name: /показать\s*(ещё|еще)|загрузить\s*(ещё|еще)|^(ещё|еще)$/i
-    }).last();
-
-    if (await moreButton.count()) {
-      try {
-        if (await moreButton.isVisible()) {
-          await moreButton.click({ timeout: 5000 });
-          await page.waitForTimeout(1800);
-          continue;
-        }
-      } catch (_) {}
-    }
-
-    const moreLink = page.getByRole('link', {
-      name: /показать\s*(ещё|еще)|загрузить\s*(ещё|еще)|^(ещё|еще)$/i
-    }).last();
-
-    if (await moreLink.count()) {
-      try {
-        if (await moreLink.isVisible()) {
-          await moreLink.click({ timeout: 5000 });
-          await page.waitForTimeout(1800);
-          continue;
-        }
-      } catch (_) {}
-    }
-
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(1800);
-
-    if (stableRounds >= 3) break;
-  }
-
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForTimeout(400);
-}
-
-async function collectRows(page) {
+async function collectRowsOnce(page) {
   await page.goto(ARCHIVE_URL, {
     waitUntil: 'domcontentloaded',
     timeout: 60000
+  }).catch(error => {
+    console.warn(`WARN: archive goto: ${error.message}`);
   });
-  await page.waitForTimeout(3500);
 
-  await expandArchive(page, 150);
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
 
   return page.locator('body').evaluate(() => {
     const drawRx = /№\s*\d{4,}/;
@@ -292,20 +243,15 @@ async function collectRows(page) {
 
     function nearestDateLabel(el) {
       let best = null;
-
       for (const node of all) {
         if (node === el || el.contains(node)) continue;
-
         const pos = node.compareDocumentPosition(el);
         if (!(pos & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-
         const text = norm(node.innerText || node.textContent || '');
         if (!text || text.length > 40 || !dateRx.test(text)) continue;
         if (node.children && node.children.length > 3) continue;
-
         best = text;
       }
-
       return best;
     }
 
@@ -317,7 +263,6 @@ async function collectRows(page) {
         const text = norm(el.innerText || '');
         if (!drawRx.test(text)) return false;
         if (el.querySelectorAll('button').length < 20) return false;
-
         return ![...el.children].some(ch =>
           drawRx.test(norm(ch.innerText || '')) &&
           ch.querySelectorAll('button').length >= 20
@@ -413,79 +358,127 @@ function comparable(row) {
   });
 }
 
-async function readArchiveThreeTimes(page) {
-  const MIN_COMMON = 60;
-  const reads = [];
+function contiguousRuns(records) {
+  const ordered = [...records].sort((a, b) => a.draw - b.draw);
+  const runs = [];
+  for (const record of ordered) {
+    if (!runs.length || record.draw !== runs.at(-1).at(-1).draw + 1) {
+      runs.push([record]);
+    } else {
+      runs.at(-1).push(record);
+    }
+  }
+  return runs;
+}
 
-  for (let i = 1; i <= 3; i += 1) {
-    const rawRows = await collectRows(page);
-    const parsed = parseRows(rawRows);
+async function collectRecentTail(page) {
+  let lastDiagnostic = null;
 
-    if (parsed.length < MIN_COMMON) {
-      throw new Error(
-        `FAIL: чтение ${i}: получено только ${parsed.length} тиражей`
-      );
+  for (let attempt = 1; attempt <= PAGE_READ_ATTEMPTS; attempt += 1) {
+    await page.waitForTimeout(2500 + 1000 * attempt);
+
+    let rawRows = [];
+    let parsed = [];
+    let parseError = null;
+
+    try {
+      rawRows = await collectRowsOnce(page);
+      parsed = parseRows(rawRows);
+    } catch (error) {
+      parseError = error;
     }
 
-    reads.push(parsed);
+    lastDiagnostic = {
+      attempt,
+      url: page.url(),
+      rawRows: rawRows.length,
+      parsed: parsed.length,
+      error: parseError?.message || null
+    };
+
     console.log(
-      `Чтение ${i}: ${parsed.length} тиражей, ` +
-      `диапазон №${parsed[0].draw}–№${parsed.at(-1).draw}`
+      `Столото page attempt ${attempt}/${PAGE_READ_ATTEMPTS}: ` +
+      `raw=${rawRows.length}, parsed=${parsed.length}` +
+      (parseError ? `, error=${parseError.message}` : '')
     );
 
-    if (i < 3) await page.waitForTimeout(1500);
+    if (!parseError && parsed.length >= TAIL_SIZE) {
+      return parsed.slice(-TAIL_SIZE);
+    }
+
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1800);
+  }
+
+  throw new Error(
+    `FAIL: после ${PAGE_READ_ATTEMPTS} чтений страницы не найдено ` +
+    `${TAIL_SIZE} свежих тиражей; diagnostics=${JSON.stringify(lastDiagnostic)}`
+  );
+}
+
+async function readArchiveThreeTimes(page) {
+  const reads = [];
+
+  for (let check = 1; check <= 3; check += 1) {
+    const tail = await collectRecentTail(page);
+    reads.push(tail);
+    console.log(
+      `Проверка ${check}/3: ${tail.length} свежих тиражей, ` +
+      `№${tail[0].draw}–№${tail.at(-1).draw}`
+    );
+    if (check < 3) await page.waitForTimeout(900);
   }
 
   const maps = reads.map(arr => new Map(arr.map(row => [row.draw, row])));
+  const minimum = Math.max(2, TAIL_SIZE - 1);
+  const candidates = [];
 
-  // Берём объединение номеров из всех трёх чтений. Тираж считается
-  // подтверждённым, только если полностью одинаковая запись встретилась
-  // минимум в двух чтениях. Одиночный результат никогда не принимается.
-  const candidateDraws = [...new Set(maps.flatMap(map => [...map.keys()]))]
-    .sort((a, b) => a - b);
+  for (let left = 0; left < maps.length - 1; left += 1) {
+    for (let right = left + 1; right < maps.length; right += 1) {
+      const agreed = [];
+      const common = [...maps[left].keys()]
+        .filter(draw => maps[right].has(draw))
+        .sort((a, b) => a - b);
 
-  const stable = [];
-  const mismatches = [];
+      for (const draw of common) {
+        const a = maps[left].get(draw);
+        const b = maps[right].get(draw);
+        if (comparable(a) === comparable(b)) agreed.push(a);
+      }
 
-  for (const draw of candidateDraws) {
-    const groups = new Map();
-
-    for (const map of maps) {
-      const row = map.get(draw);
-      if (!row) continue;
-
-      const key = comparable(row);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(row);
+      for (const run of contiguousRuns(agreed)) {
+        if (run.length >= minimum) {
+          const tail = run.slice(-TAIL_SIZE);
+          candidates.push({
+            records: tail,
+            lastDraw: tail.at(-1).draw,
+            length: tail.length,
+            checks: [left + 1, right + 1]
+          });
+        }
+      }
     }
-
-    const majority = [...groups.values()]
-      .sort((a, b) => b.length - a.length)[0] || [];
-
-    if (majority.length >= 2) stable.push(majority[0]);
-    else mismatches.push(draw);
   }
 
-  if (stable.length < MIN_COMMON) {
+  if (!candidates.length) {
     throw new Error(
-      `FAIL: после проверки 2 из 3 стабильны только ` +
-      `${stable.length} тиражей`
+      `FAIL: нет непрерывного консенсуса минимум ${minimum} тиражей ` +
+      `в двух из трёх чтений`
     );
   }
 
-  if (mismatches.length) {
-    console.log(
-      `WARN: нестабильные строки пропущены (${mismatches.length}): ` +
-      mismatches.slice(0, 20).map(n => `№${n}`).join(', ')
-    );
-  }
+  const chosen = candidates.sort((a, b) =>
+    b.lastDraw - a.lastDraw || b.length - a.length
+  )[0];
 
   console.log(
-    `Проверка 2 из 3 PASS: ${stable.length} тиражей полностью совпали ` +
-    `минимум в двух чтениях; диапазон №${stable[0].draw}–№${stable.at(-1).draw}`
+    `Проверка 2 из 3 PASS: проверки ${chosen.checks.join('+')}; ` +
+    `${chosen.records.length} тиражей; ` +
+    `№${chosen.records[0].draw}–№${chosen.records.at(-1).draw}`
   );
 
-  return stable;
+  return chosen.records;
 }
 
 async function readTrustedHistory() {
@@ -673,7 +666,7 @@ function validateProduction(stolotoDraws, historyRaw) {
 }
 
 function mergePreservingOfficialFields(historyRaw, fresh) {
-  const source = 'Официальный Столото · OAuth · проверка 2 из 3';
+  const source = 'Официальный Столото · OAuth · свежий хвост M5M · проверка 2 из 3';
 
   const additions = fresh.map(row => ({
     draw: row.draw,
