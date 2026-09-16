@@ -10,12 +10,12 @@ permissions:
 
 concurrency:
   group: column-matrix-stoloto-auto
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
 
     steps:
       - uses: actions/checkout@v4
@@ -44,31 +44,17 @@ jobs:
           npm install playwright
           npx playwright install --with-deps chromium
 
-      - name: Read Stoloto until latest due draw is caught
+      - name: Read Stoloto once
         env:
           STOLOTO_EMAIL: ${{ secrets.STOLOTO_EMAIL }}
           STOLOTO_PASSWORD: ${{ secrets.STOLOTO_PASSWORD }}
         shell: bash
         run: |
-          set -u
-          success=0
-
-          for attempt in 1 2 3 4 5 6; do
-            echo "Column Matrix Stoloto attempt $attempt/6"
-            cp keno-history.json /tmp/keno-history.before.json
-
-            if timeout --signal=TERM --kill-after=15s 180s node stoloto-column-matrix-update.mjs; then
-              success=1
-              break
-            fi
-
+          set -euo pipefail
+          cp keno-history.json /tmp/keno-history.before.json
+          if ! timeout --signal=TERM --kill-after=10s 240s node stoloto-column-matrix-update.mjs; then
             echo "Reader failed; restore verified history."
             cp /tmp/keno-history.before.json keno-history.json
-            if [ "$attempt" -lt 6 ]; then sleep 25; fi
-          done
-
-          if [ "$success" -ne 1 ]; then
-            echo "::error::Stoloto could not be updated after 6 attempts."
             exit 1
           fi
 
