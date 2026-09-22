@@ -1,4 +1,4 @@
-const CACHE='matrix-v240-combo-ai-1';
+const CACHE='matrix-v240-current-groups-2';
 
 const ASSETS=[
   './',
