@@ -156,7 +156,12 @@
     return map;
   }
 
-  async function loadHistory() {
+  async function loadHistory(force = false) {
+    if (force) {
+      historyMap = null;
+      historyPromise = null;
+    }
+
     if (historyMap) return historyMap;
     if (historyPromise) return historyPromise;
 
@@ -173,9 +178,17 @@
         console.warn('Current groups history load skipped:', error);
         historyMap = new Map();
         return historyMap;
+      })
+      .finally(() => {
+        historyPromise = null;
       });
 
     return historyPromise;
+  }
+
+  function invalidateHistory() {
+    historyMap = null;
+    historyPromise = null;
   }
 
   function ensureGroupsBlock() {
@@ -237,10 +250,20 @@
     lastRenderedDraw = draw;
     setAll('…');
 
-    const map = await loadHistory();
+    let map = await loadHistory();
     if (lastRenderedDraw !== draw) return;
 
-    const balls = map.get(draw);
+    let balls = map.get(draw);
+
+    // Главная матрица обновляет свой архив отдельно. Если новый тираж уже виден
+    // в таблице, а этот вспомогательный снимок был загружен раньше, перечитываем
+    // keno-history.json немедленно и не оставляем ложные прочерки.
+    if (!balls) {
+      map = await loadHistory(true);
+      if (lastRenderedDraw !== draw) return;
+      balls = map.get(draw);
+    }
+
     if (!balls) {
       setAll('—');
       fitPopup();
@@ -278,6 +301,11 @@
   ensureGroupsBlock();
   loadHistory();
 
+  // При ручном обновлении основной матрицы старый снимок групп больше не держим.
+  ['syncBtn', 'syncBtn2'].forEach(id => {
+    document.getElementById(id)?.addEventListener('click', invalidateHistory, true);
+  });
+
   // Основной путь: как только matrix.js меняет номер тиража в карточке,
   // MutationObserver автоматически пересчитывает ГР сейчас.
   const drawNode = document.getElementById('mpDraw');
@@ -297,7 +325,10 @@
     if (Number.isFinite(draw)) setTimeout(() => renderGroups(draw), 0);
   }, true);
 
-  window.addEventListener('pageshow', syncFromPopup);
+  window.addEventListener('pageshow', () => {
+    invalidateHistory();
+    syncFromPopup();
+  });
 })();
 
 // archive-result-icon-fix.js теперь подключается напрямую из index.html.
