@@ -109,12 +109,13 @@
   window.addEventListener('online', refreshOnWake);
 })();
 
-// Дополняем карточку победившего столба составом всех групп текущего тиража.
-// Работает для любой кликабельной записи архива, включая «Горизонталь Юли».
+// Карточка победившего столба: всегда показываем состав ГР 0/1/2/3/4+
+// для самого открытого тиража. Работает на всей доступной истории.
 (() => {
   const HISTORY_URL = './keno-history.json';
   let historyMap = null;
   let historyPromise = null;
+  let lastRenderedDraw = null;
 
   const colOf = n => Number(n) % 10 || 10;
 
@@ -202,11 +203,11 @@
     return block;
   }
 
-  function setLoading() {
+  function setAll(value) {
     ensureGroupsBlock();
     for (let state = 0; state <= 4; state += 1) {
       const el = document.getElementById(`mpNowGroup${state}`);
-      if (el) el.textContent = '…';
+      if (el) el.textContent = value;
     }
   }
 
@@ -219,28 +220,29 @@
     if (!popup || popup.hidden) return;
 
     requestAnimationFrame(() => {
-      const r = popup.getBoundingClientRect();
       const pad = 8;
+      const r = popup.getBoundingClientRect();
       let top = Number.parseFloat(popup.style.top) || r.top;
-
-      if (r.bottom > window.innerHeight - pad) {
-        top -= r.bottom - (window.innerHeight - pad);
-      }
+      if (r.bottom > window.innerHeight - pad) top -= r.bottom - (window.innerHeight - pad);
       if (top < pad) top = pad;
       popup.style.top = `${Math.round(top)}px`;
+      popup.style.maxHeight = `calc(100vh - ${pad * 2}px)`;
+      popup.style.overflowY = 'auto';
     });
   }
 
   async function renderGroups(drawNumber) {
-    setLoading();
-    const map = await loadHistory();
-    const balls = map.get(Number(drawNumber));
+    const draw = Number(drawNumber);
+    if (!Number.isFinite(draw)) return;
+    lastRenderedDraw = draw;
+    setAll('…');
 
+    const map = await loadHistory();
+    if (lastRenderedDraw !== draw) return;
+
+    const balls = map.get(draw);
     if (!balls) {
-      for (let state = 0; state <= 4; state += 1) {
-        const el = document.getElementById(`mpNowGroup${state}`);
-        if (el) el.textContent = '—';
-      }
+      setAll('—');
       fitPopup();
       return;
     }
@@ -257,22 +259,45 @@
       const el = document.getElementById(`mpNowGroup${state}`);
       if (el) el.textContent = formatCols(groups[state]);
     }
-
     fitPopup();
   }
 
-  // Подгружаем архив заранее, чтобы карточка открывалась быстро.
+  function currentPopupDraw() {
+    const text = document.getElementById('mpDraw')?.textContent || '';
+    const m = text.match(/\d+/);
+    return m ? Number(m[0]) : null;
+  }
+
+  function syncFromPopup() {
+    ensureGroupsBlock();
+    const draw = currentPopupDraw();
+    if (Number.isFinite(draw)) renderGroups(draw);
+  }
+
+  // Блок существует сразу после загрузки скрипта — не зависит от клика/всплытия события.
+  ensureGroupsBlock();
   loadHistory();
 
+  // Основной путь: как только matrix.js меняет номер тиража в карточке,
+  // MutationObserver автоматически пересчитывает ГР сейчас.
+  const drawNode = document.getElementById('mpDraw');
+  if (drawNode) {
+    new MutationObserver(syncFromPopup).observe(drawNode, {
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+  }
+
+  // Дополнительная страховка для всех ячеек матрицы и Горизонтали Юли.
   document.addEventListener('click', event => {
     const cell = event.target?.closest?.('[data-win-draw]');
     if (!cell) return;
-    const drawNumber = Number(cell.dataset.winDraw);
-    if (!Number.isFinite(drawNumber)) return;
-
-    // Основная карточка создаётся matrix.js; дополняем её сразу после его обработчика.
-    setTimeout(() => renderGroups(drawNumber), 0);
+    const draw = Number(cell.dataset.winDraw);
+    if (Number.isFinite(draw)) setTimeout(() => renderGroups(draw), 0);
   }, true);
+
+  window.addEventListener('pageshow', syncFromPopup);
 })();
 
 // archive-result-icon-fix.js теперь подключается напрямую из index.html.
