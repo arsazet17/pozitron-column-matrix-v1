@@ -58,6 +58,16 @@ jobs:
             exit 1
           fi
 
+      - name: Build lightweight matrix feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const rows = JSON.parse(fs.readFileSync('keno-history.json', 'utf8'));
+          fs.writeFileSync('keno-recent.json', JSON.stringify(rows.slice(-2500)));
+          NODE
+
       - name: Commit DRAW immediately
         shell: bash
         run: |
@@ -65,10 +75,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- keno-history.json stoloto-status.json; then
+          if git diff --quiet -- keno-history.json keno-recent.json stoloto-status.json; then
             echo "No new draw data"
           else
-            git add keno-history.json stoloto-status.json
+            git add keno-history.json keno-recent.json stoloto-status.json
             git commit -m "Матрица · LIVE draw"
             git fetch origin main
             git rebase origin/main
