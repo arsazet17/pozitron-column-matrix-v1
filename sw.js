@@ -1,4 +1,4 @@
-const CACHE='matrix-v240-current-groups-2';
+const CACHE='matrix-v240-recent-feed-1';
 
 const ASSETS=[
   './',
