@@ -4,10 +4,11 @@
   const STORAGE_KEY = 'pozitron_column_matrix_draws_v1';
   const URL_KEY = 'pozitron_column_matrix_source_v1';
   const INTERVAL_KEY = 'pozitron_column_matrix_interval_v1';
-  const DEFAULT_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-history.json';
+  const DEFAULT_URL = 'https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/keno-recent.json';
 
   let draws = [];
   let timer = null;
+  let updating = false;
   let activeView = 'matrix';
 
   const pad = n => String(n).padStart(2, '0');
@@ -113,7 +114,7 @@
 
   function save() {
     // localStorage используется только как небольшой быстрый кэш.
-    // Основная база всегда читается из keno-history.json репозитория.
+    // Актуальные 2500 тиражей читаются из keno-recent.json репозитория.
     const sizes = [1200, 600, 300, 150];
     try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
 
@@ -443,7 +444,7 @@
 
   function sourceUrl() {
     // Для Матрицы столбов единственный штатный источник —
-    // её собственный keno-history.json.
+    // её собственный компактный keno-recent.json.
     // Старое пользовательское значение источника автоматически заменяется.
     const saved = (localStorage.getItem(URL_KEY) || '').trim();
     if (saved !== DEFAULT_URL) {
@@ -462,6 +463,8 @@
   }
 
   async function update() {
+    if (updating) return;
+    updating = true;
     const saved = sourceUrl();
     $('status').textContent = 'Проверяю новые тиражи…';
     try {
@@ -473,6 +476,8 @@
     } catch (e) {
       render();
       $('status').textContent = 'Обновление не выполнено: ' + e.message;
+    } finally {
+      updating = false;
     }
   }
 
