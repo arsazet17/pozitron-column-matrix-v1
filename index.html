@@ -58,7 +58,7 @@ button,input,select{font:inherit}
 .field label{font-size:12px;color:var(--muted)}
 .field input,.field select{width:100%;border:1px solid var(--line);background:#091524;color:#fff;border-radius:9px;padding:10px}
 .row{padding:10px;border:1px solid #2d4665;background:#101f33;border-radius:10px;margin-top:8px;font-size:13px}
-.footer{position:fixed;left:0;right:0;bottom:0;border-top:1px solid var(--line);background:rgba(5,12,21,.97);backdrop-filter:blur(10px);padding:7px 8px calc(7px + env(safe-area-inset-bottom))}
+.footer{position:fixed;left:0;right:0;bottom:0;z-index:60;border-top:1px solid var(--line);background:rgba(5,12,21,.97);backdrop-filter:blur(10px);padding:7px 8px calc(7px + env(safe-area-inset-bottom))}
 .footerin{max-width:980px;margin:auto;display:grid;grid-template-columns:repeat(4,1fr)}
 .footer button{border:0;background:transparent;color:#c7d3df;font-size:11px;padding:3px}
 .footer b{display:block;font-size:20px}
@@ -261,7 +261,22 @@ button,input,select{font:inherit}
 <script src="ai-analyzer.js?v=f3bdea2d6623"></script>
 <script src="combo-engine.js?v=f22dd1dbb085"></script>
 
-<script id="matrix-sw-controllerchange-v2216">\n(() => {\n  if (!('serviceWorker' in navigator)) return;\n  let reloading = false;\n  navigator.serviceWorker.addEventListener('controllerchange', () => {\n    if (reloading) return;\n    reloading = true;\n    location.reload();\n  });\n  navigator.serviceWorker.ready.then(reg => {\n    if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');\n    reg.update().catch(() => {});\n  }).catch(() => {});\n})();\n</script>\n<script id="matrix-sw-register">
+<script id="matrix-sw-controllerchange-v2216">
+(() => {
+  if (!('serviceWorker' in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  navigator.serviceWorker.ready.then(reg => {
+    if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+    reg.update().catch(() => {});
+  }).catch(() => {});
+})();
+</script>\n<script id="matrix-sw-register">
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
