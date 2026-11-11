@@ -455,16 +455,32 @@
 
   async function fetchSource(url) {
     const busted = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
-    const r = await fetch(busted, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const incoming = parsePayload(await r.text());
+    // Ограничение по времени: зависший запрос (VPN, сон ноутбука) не должен блокировать следующие проверки.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+    let text;
+    try {
+      const r = await fetch(busted, { cache: 'no-store', signal: ctrl.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      text = await r.text();
+    } catch (e) {
+      throw new Error(e?.name === 'AbortError' ? 'нет ответа 25 с' : (e?.message || String(e)));
+    } finally {
+      clearTimeout(timer);
+    }
+    const incoming = parsePayload(text);
     if (!incoming.length) throw new Error('нет распознанных тиражей');
     return incoming;
   }
 
+  let updatingSince = 0, lastCheckAt = 0;
+  const hhmm = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   async function update() {
-    if (updating) return;
+    // Защита от «вечного» флага: если прошлая проверка висит дольше 40 с — начинаем заново.
+    if (updating && Date.now() - updatingSince < 40000) return;
     updating = true;
+    updatingSince = Date.now();
+    lastCheckAt = Date.now();
     const saved = sourceUrl();
     $('status').textContent = 'Проверяю новые тиражи…';
     try {
@@ -472,10 +488,10 @@
       const added = merge(incoming);
       render();
       const officialCount = draws.filter(d => winner(d)).length;
-      $('status').textContent = `Обновлено · добавлено ${added} · всего ${draws.length} · официальных столбцов ${officialCount}`;
+      $('status').textContent = `Обновлено ${hhmm()} · добавлено ${added} · всего ${draws.length} · официальных столбцов ${officialCount}`;
     } catch (e) {
       render();
-      $('status').textContent = 'Обновление не выполнено: ' + e.message;
+      $('status').textContent = `Обновление не выполнено ${hhmm()}: ` + e.message;
     } finally {
       updating = false;
     }
@@ -487,6 +503,23 @@
     const ms = Number(localStorage.getItem(INTERVAL_KEY) || 60000);
     if (ms) timer = setInterval(update, ms);
   }
+
+  // Вернулся к окну, ноутбук проснулся, появилась сеть — проверяем сразу, не дожидаясь таймера.
+  function wakeUpdate() {
+    const ms = Number(localStorage.getItem(INTERVAL_KEY) || 60000);
+    if (!ms) return;
+    if (document.visibilityState === 'visible' && Date.now() - lastCheckAt > 15000) update();
+  }
+  document.addEventListener('visibilitychange', wakeUpdate);
+  window.addEventListener('focus', wakeUpdate);
+  window.addEventListener('online', wakeUpdate);
+  window.addEventListener('pageshow', wakeUpdate);
+  document.addEventListener('resume', wakeUpdate);
+  // Страховка от заморозки таймера: раз в 20 с смотрим, не пропущена ли плановая проверка.
+  setInterval(() => {
+    const ms = Number(localStorage.getItem(INTERVAL_KEY) || 60000);
+    if (ms && Date.now() - lastCheckAt > ms + 30000) update();
+  }, 20000);
 
   function openSettings() {
     $('settingsPanel').classList.toggle('show');

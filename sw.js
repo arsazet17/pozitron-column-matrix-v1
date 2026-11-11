@@ -1,4 +1,4 @@
-const CACHE='matrix-v241-fast-load-1';
+const CACHE='matrix-v242-live-refresh-1';
 
 const ASSETS=[
   './',
