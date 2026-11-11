@@ -7,7 +7,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.4.0</title>
+<title>ПОЗИТРОН · МАТРИЦА СТОЛБОВ v2.4.1</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
@@ -132,7 +132,7 @@ button,input,select{font:inherit}
 <div class="app">
   <div class="top">
     <div class="brand">🎯 ПОЗИТРОН · МАТРИЦА СТОЛБОВ
-      <small>новое отдельное приложение · v2.4.0</small>
+      <small>новое отдельное приложение · v2.4.1</small>
     </div>
     <button id="syncBtn" class="iconbtn" title="Обновить">↻</button>
   </div>
@@ -257,9 +257,10 @@ button,input,select{font:inherit}
 </div>
 
 <script src="matrix.js?v=82d457ad0d31"></script>
-<script src="yulia-gap-fix.js?v=c5691b39e442"></script>
-<script src="ai-analyzer.js?v=f3bdea2d6623"></script>
-<script src="combo-engine.js?v=f22dd1dbb085"></script>
+<script src="history-cache.js?v=36b612a26ca0"></script>
+<script src="yulia-gap-fix.js?v=2782f30c34ab"></script>
+<script src="ai-analyzer.js?v=527d0f75eedd"></script>
+<script src="combo-engine.js?v=0151af288b34"></script>
 
 <script id="matrix-sw-controllerchange-v2216">
 (() => {
@@ -281,7 +282,7 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register(
-        './sw.js?v=69707c3a8d7b',
+        './sw.js?v=d6b73738a308',
         { updateViaCache: 'none' }
       );
       await reg.update();

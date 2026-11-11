@@ -85,10 +85,16 @@
   }
 
   async function fetchFullHistory() {
-    const url = `${HISTORY_URL}?ts=${Date.now()}`;
-    const response = await fetch(url, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`Архив GitHub: HTTP ${response.status}`);
-    const payload = await response.json();
+    let payload;
+    if (window.PozitronHistory) {
+      // Полный архив — один раз за запуск, дальше только свежий хвост.
+      payload = await window.PozitronHistory.get();
+    } else {
+      const url = `${HISTORY_URL}?ts=${Date.now()}`;
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Архив GitHub: HTTP ${response.status}`);
+      payload = await response.json();
+    }
     const draws = dedupeDraws(walkHistory(payload));
     if (!draws.length) throw new Error('В полном архиве не найдены официальные столбцы');
     return draws;
@@ -248,18 +254,23 @@
   }
 
 
+  let internalFetchDraw = null, internalFetchAt = 0;
   async function fetchServerInternalArchive() {
     try {
-      const u = `${INTERNAL_ARCHIVE_URL}?ts=${Date.now()}`;
-      const r = await fetch(u, {
-        method: 'GET',
-        cache: 'no-store',
-        mode: 'cors',
-        credentials: 'omit'
-      });
-      if (!r.ok) return;
-
-      const server = await r.json();
+      let server;
+      if (window.PozitronHistory?.internal) {
+        server = await window.PozitronHistory.internal();
+      } else {
+        const u = `${INTERNAL_ARCHIVE_URL}?ts=${Date.now()}`;
+        const r = await fetch(u, {
+          method: 'GET',
+          cache: 'no-store',
+          mode: 'cors',
+          credentials: 'omit'
+        });
+        if (!r.ok) return;
+        server = await r.json();
+      }
       if (!Array.isArray(server)) return;
 
       const local = loadArchive();
@@ -1013,7 +1024,18 @@
       $('aiStatus').textContent = 'ЛОКАЛЬНЫЙ РЕЗЕРВ';
     }
 
-    await fetchServerInternalArchive();
+    // Архив серверных прогнозов (несколько МБ) тянем только при новом тираже;
+    // если прогноз на него ещё не опубликован — повторяем не чаще раза в 2 минуты.
+    {
+      const lastDraw = draws.at(-1)?.draw;
+      const hasCurrent = loadArchive().some(r => r.baseDraw === lastDraw && !r.settled);
+      const now = Date.now();
+      if (lastDraw !== internalFetchDraw || (!hasCurrent && now - internalFetchAt > 120000)) {
+        internalFetchDraw = lastDraw;
+        internalFetchAt = now;
+        await fetchServerInternalArchive();
+      }
+    }
     let archive = loadArchive();
     settleArchive(archive, draws);
     // INTERNAL on phone disabled: server/archive only.

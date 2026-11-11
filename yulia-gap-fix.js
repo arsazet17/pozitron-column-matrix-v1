@@ -56,17 +56,25 @@
       .slice(-200);
   }
 
+  let lastInternalSync = 0;
   async function syncPersistentInternal() {
     if (archiveSyncBusy) return;
+    // Архив внутренних прогнозов большой — не чаще раза в 5 минут.
+    if (Date.now() - lastInternalSync < 300000) return;
+    lastInternalSync = Date.now();
     archiveSyncBusy = true;
 
     try {
-      const response = await fetch(`${INTERNAL_URL}?ts=${Date.now()}`, {
-        cache: 'no-store'
-      });
-      if (!response.ok) throw new Error(`INTERNAL HTTP ${response.status}`);
-
-      const remote = await response.json();
+      let remote;
+      if (window.PozitronHistory?.internal) {
+        remote = await window.PozitronHistory.internal();
+      } else {
+        const response = await fetch(`${INTERNAL_URL}?ts=${Date.now()}`, {
+          cache: 'no-store'
+        });
+        if (!response.ok) throw new Error(`INTERNAL HTTP ${response.status}`);
+        remote = await response.json();
+      }
       const local = safeJson(
         localStorage.getItem(AI_ARCHIVE_KEY) || '[]',
         []
@@ -165,11 +173,13 @@
     if (historyMap) return historyMap;
     if (historyPromise) return historyPromise;
 
-    historyPromise = fetch(`${HISTORY_URL}?ts=${Date.now()}`, { cache: 'no-store' })
-      .then(response => {
-        if (!response.ok) throw new Error(`HISTORY HTTP ${response.status}`);
-        return response.json();
-      })
+    historyPromise = (window.PozitronHistory
+      ? window.PozitronHistory.get(force)
+      : fetch(`${HISTORY_URL}?ts=${Date.now()}`, { cache: 'no-store' })
+        .then(response => {
+          if (!response.ok) throw new Error(`HISTORY HTTP ${response.status}`);
+          return response.json();
+        }))
       .then(payload => {
         historyMap = collectHistory(payload);
         return historyMap;

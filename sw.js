@@ -1,9 +1,10 @@
-const CACHE='matrix-v240-recent-feed-1';
+const CACHE='matrix-v241-fast-load-1';
 
 const ASSETS=[
   './',
   './index.html',
   './matrix.js',
+  './history-cache.js',
   './yulia-gap-fix.js',
   './ai-analyzer.js',
   './combo-engine.js',

@@ -88,4 +88,9 @@ archive=archive.sort((a,b)=>Number(a.target?.draw||0)-Number(b.target?.draw||0))
 model.updatedAt=new Date().toISOString();model.version=VERSION;
 await fs.writeFile(ARCHIVE_FILE,JSON.stringify(archive,null,2)+'\n');
 await fs.writeFile(MODEL_FILE,JSON.stringify(model,null,2)+'\n');
+// Компактная витрина для приложения: открытый прогноз + 50 последних закрытых, только поля, которые рисует экран.
+{const slim=r=>({id:r.id,status:r.status,target:r.target,combos:Object.fromEntries(Object.entries(r.combos||{}).map(([k,c])=>[k,{numbers:c.numbers,weights:c.weights,hits:c.hits,hitNumbers:c.hitNumbers,prize:c.prize}]))});
+const lastOpen=[...archive].reverse().find(r=>r.status==='open');
+const view=[...archive.filter(r=>r.status==='closed').slice(-50),...(lastOpen?[lastOpen]:[])].map(slim);
+await fs.writeFile('combo-forecast-view.json',JSON.stringify(view)+'\n');}
 console.log(`${VERSION} · base ${latest.draw} -> ${open.target.draw} · ${[3,4,5,6,7].map(k=>`K${k}:${open.combos['K'+k].numbers.join('-')}`).join(' | ')}`);

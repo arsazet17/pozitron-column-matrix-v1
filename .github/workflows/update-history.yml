@@ -121,12 +121,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- combo-forecast-archive.json combo-model-state.json; then
+          if git diff --quiet -- combo-forecast-archive.json combo-model-state.json combo-forecast-view.json; then
             echo "No COMBO changes"
             exit 0
           fi
 
-          git add combo-forecast-archive.json combo-model-state.json
+          git add combo-forecast-archive.json combo-model-state.json combo-forecast-view.json
           git commit -m "Матрица · COMBO AI 2.0.1 learn + frozen"
           git fetch origin main
           git rebase origin/main

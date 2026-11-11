@@ -2,6 +2,7 @@
 (() => {
   const ENGINE='COMBO-AI-2.0.1';
   const ARCHIVE_URL='https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/combo-forecast-archive.json';
+  const VIEW_URL='https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/combo-forecast-view.json';
   const MODEL_URL='https://raw.githubusercontent.com/arsazet17/pozitron-column-matrix-v1/main/combo-model-state.json';
   const REFRESH_MS=60000;
   const CACHE_ARCHIVE_KEY='pozitron_combo_server_archive_cache_v201';
@@ -9,7 +10,8 @@
   const $=id=>document.getElementById(id);
   const fmt=n=>String(n).padStart(2,'0');
   const rub=n=>`${Number(n||0).toLocaleString('ru-RU')} ₽`;
-  let busy=false;
+  let busy=false,lastArchive=null,lastStamp='';
+  const slimForCache=a=>{const open=[...a].reverse().find(r=>r.status==='open');return [...a.filter(r=>r.status==='closed').slice(-50),...(open?[open]:[])].map(r=>({id:r.id,status:r.status,target:r.target,combos:Object.fromEntries(Object.entries(r.combos||{}).map(([k,c])=>[k,{numbers:c.numbers,weights:c.weights,hits:c.hits,hitNumbers:c.hitNumbers,prize:c.prize}]))}))};
 
   async function getJson(url,fallback,timeoutMs=6500){
     const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),timeoutMs);
@@ -54,7 +56,15 @@
     ['matrixViewBtn','yuliaViewBtn','aiViewBtn'].forEach(id=>$(id)?.addEventListener('click',()=>{$('comboView')?.classList.remove('active');$('comboViewBtn')?.classList.remove('active')}));
     $('comboRefreshBtn')?.addEventListener('click',refresh);
   }
-  async function refresh(){if(busy)return;busy=true;try{if($('comboEngineStatus'))$('comboEngineStatus').textContent='ОБНОВЛЯЮ…';const cachedA=readCache(CACHE_ARCHIVE_KEY,[]),cachedM=readCache(CACHE_MODEL_KEY,{});const [a,m]=await Promise.all([getJson(ARCHIVE_URL,cachedA),getJson(MODEL_URL,cachedM)]);writeCache(CACHE_ARCHIVE_KEY,a);writeCache(CACHE_MODEL_KEY,m);render(a,m)}finally{busy=false}}
+  async function refresh(){if(busy)return;busy=true;try{if($('comboEngineStatus'))$('comboEngineStatus').textContent='ОБНОВЛЯЮ…';const cachedA=readCache(CACHE_ARCHIVE_KEY,[]),cachedM=readCache(CACHE_MODEL_KEY,{});const m=await getJson(MODEL_URL,cachedM);
+      // Архив тянем только когда сервер посчитал новый прогноз (или архива ещё нет): сначала компактную витрину, полный файл — запасной путь.
+      const stamp=String(m?.updatedAt||'');let a=lastArchive||cachedA;
+      if(!lastArchive||!Array.isArray(a)||!a.length||stamp!==lastStamp){
+        let v=await getJson(VIEW_URL,null,20000);
+        if(!Array.isArray(v)||!v.length)v=await getJson(ARCHIVE_URL,null,120000);
+        if(Array.isArray(v)&&v.length){a=v;lastArchive=v;lastStamp=stamp;writeCache(CACHE_ARCHIVE_KEY,slimForCache(v))}
+      }
+      writeCache(CACHE_MODEL_KEY,m);render(a,m)}finally{busy=false}}
   function boot(){injectUi();const a=readCache(CACHE_ARCHIVE_KEY,[]),m=readCache(CACHE_MODEL_KEY,{});if((Array.isArray(a)&&a.length)||Object.keys(m||{}).length){render(a,m);if($('comboEngineStatus'))$('comboEngineStatus').textContent='КЭШ ПОКАЗАН · ОБНОВЛЯЮ…'}refresh();setInterval(refresh,REFRESH_MS)}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
